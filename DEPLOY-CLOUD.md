@@ -123,3 +123,32 @@
 # 本地已验证的启动方式（仅本机）
 .\.venv\Scripts\python.exe main.py web          # 默认 127.0.0.1:8000
 ```
+
+---
+
+## 九、后续版本更新（代码改动如何上线）⭐
+
+Render 默认开启 **Auto-Deploy**：只要往 `main` 分支推新提交，它会**自动重新构建并部署**，无需在 Render 控制台手动操作。
+
+### 方式 A：一键脚本（推荐，已随仓库提供 `deploy-push.bat`）
+
+1. 在项目目录改完代码后，双击 `deploy-push.bat`。
+2. 按提示输入本次更新说明（或命令行 `deploy-push.bat "修复去背bug"`）。
+3. 脚本自动 `git add / commit / push`，推送完成后 Render 自动重新部署（5~15 分钟）。
+
+### 方式 B：手动命令
+
+```bash
+cd "E:\1_Software\6_AI工具\deepseek\2_开发\图片生成"
+git add -A
+git commit -m "feat: 本次更新说明"
+git push origin main
+```
+
+### 注意事项
+
+- **新增 Python 依赖**：必须写进 `requirements.txt` 再推送，否则部署环境缺包会启动失败。
+- **改了 `render.yaml`**（如套餐、环境变量、启动命令）：推送后同样自动生效；也可直接在 Render 控制台 Environment 里改（控制台改动不进 git）。
+- **`config/settings.json`、`data/security/`、`.env`** 已被 `.gitignore` 排除，**不会**被推送——它们属本机/运行态配置，不要依赖它们上线。
+- **若关闭了 Auto-Deploy**：在 Render 服务页点 **Manual Deploy → Deploy latest commit** 手动触发。
+- **免费层临时盘**：每次部署后 `data/security/`（管理员账号）会重置，首次访问需重新创建管理员。
