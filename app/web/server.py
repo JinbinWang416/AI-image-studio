@@ -2059,6 +2059,114 @@ async def api_validate_path(payload: dict | None = None) -> JSONResponse:
     })
 
 
+@app.post("/api/settings/pick-dir")
+async def api_pick_dir(payload: dict | None = None) -> JSONResponse:
+    """弹出**系统目录选择框**，让用户挑一个已有文件夹。
+
+    仅本机可用（服务与浏览器同机）。tkinter 在无显示环境会失败，
+    此时返回明确原因，前端提示用户改用「新建」按钮。
+
+    ⚠️ 对话框必须放在**线程池**里跑：`askdirectory()` 是阻塞调用，
+       直接 await 会把整个事件循环卡住（其它请求全部超时）。
+    """
+    initial = str((payload or {}).get("path") or "").strip()
+
+    def _pick() -> str:
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            root.attributes("-topmost", True)     # 避免被浏览器窗口挡住
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            kwargs = {"title": "选择图片保存目录", "mustexist": True}
+            if initial and Path(initial).expanduser().is_dir():
+                kwargs["initialdir"] = str(Path(initial).expanduser())
+            return filedialog.askdirectory(**kwargs) or ""
+        finally:
+            try:
+                root.destroy()
+            except Exception:  # noqa: BLE001
+                pass
+
+    try:
+        import asyncio as _asyncio
+
+        chosen = await _asyncio.get_running_loop().run_in_executor(None, _pick)
+    except Exception as exc:  # noqa: BLE001 - 无显示环境 / tkinter 缺失
+        return JSONResponse({
+            "ok": False,
+            "message": f"无法弹出目录选择框（{type(exc).__name__}）。"
+                       f"可直接用「新建」按钮，或手动把文件夹拖进来。",
+        })
+
+    if not chosen:
+        return JSONResponse({"ok": False, "cancelled": True, "message": "已取消"})
+    return JSONResponse({"ok": True, "path": str(Path(chosen)), "message": "已选择"})
+
+
+# 目录名里不允许出现的字符（Windows 限制 + 路径分隔符）
+_BAD_DIR_CHARS = set('\\/:*?"<>|')
+
+
+@app.post("/api/settings/new-dir")
+async def api_new_dir(payload: dict | None = None) -> JSONResponse:
+    """在当前保存目录的**同级**新建一个文件夹，并建议切换过去。
+
+    为什么是「同级」而不是「子目录」：
+        保存目录的语义是"这一批图片放在哪"，换目录 = 换一个平级位置。
+        往里面建子目录会让 `output/` 越套越深，反而更难找。
+    """
+    payload = payload or {}
+    name = str(payload.get("name") or "").strip()
+    base = str(payload.get("base") or "").strip()
+
+    if not name:
+        return JSONResponse({"ok": False, "message": "目录名不能为空"})
+    if name in (".", "..") or any(c in _BAD_DIR_CHARS for c in name):
+        return JSONResponse({
+            "ok": False,
+            "message": '目录名不能包含 \\ / : * ? " < > | 等字符',
+        })
+    if len(name) > 80:
+        return JSONResponse({"ok": False, "message": "目录名过长（最多 80 字符）"})
+
+    cur = Path(base).expanduser() if base else Path(load_config().output_root)
+    target = cur.parent / name
+
+    if target.exists():
+        return JSONResponse({
+            "ok": False,
+            "message": f"目录已存在：{target.name}（可直接用「浏览」选它）",
+        })
+
+    try:
+        target.mkdir(parents=True, exist_ok=False)
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"ok": False, "message": f"创建失败：{exc}"})
+
+    # 顺手写一个可写性探针，避免用户切过去才发现没权限
+    try:
+        probe = target / ".write_test.tmp"
+        probe.write_text("ok", encoding="utf-8")
+        probe.unlink()
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({
+            "ok": False,
+            "message": f"目录已创建但不可写：{exc}",
+            "path": str(target),
+        })
+
+    return JSONResponse({
+        "ok": True,
+        "path": str(target),
+        "message": f"已创建 {target.name}",
+    })
+
+
 @app.post("/api/settings/open-dir")
 async def api_open_dir(payload: dict | None = None) -> JSONResponse:
     """在系统文件管理器中打开目录。"""

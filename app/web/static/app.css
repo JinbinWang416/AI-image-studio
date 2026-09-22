@@ -404,8 +404,26 @@ main { padding: 20px 24px 8px; }
   outline: 2px solid rgba(37, 99, 235, .2); border-color: var(--primary);
 }
 .sfield input:disabled, .sfield select:disabled { background: #f8fafc; color: #94a3b8; cursor: not-allowed; }
-.inline { display: flex; gap: 8px; }
-.inline input { flex: 1; }
+.inline { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.inline input { flex: 1; min-width: 220px; }
+/* 只读输入框（图片保存路径）
+   —— 路径只能通过「浏览… / 新建 / 打开」改变，视觉上要明确"不可编辑"：
+      浅灰底 + 虚线边 + 默认光标，且聚焦时不给高亮（否则看着像能编辑） */
+.inline input[readonly] {
+  background: #f1f5f9;
+  color: #475569;
+  border-style: dashed;
+  cursor: default;
+  user-select: text;          /* 仍允许选中复制，方便反馈问题时贴路径 */
+}
+.inline input[readonly]:focus,
+.inline input[readonly]:focus-visible {
+  outline: none;
+  box-shadow: none;
+  border-color: var(--border);
+}
+/* 只读输入框右侧的按钮组略微收紧，四个按钮也能排得下 */
+.inline .btn.small { white-space: nowrap; }
 .scheck {
   display: flex; align-items: center; gap: 8px; font-size: 13px;
   cursor: pointer; padding-top: 19px;

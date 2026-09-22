@@ -284,12 +284,20 @@
         <label class="sfield wide">
           <span>图片保存路径</span>
           <div class="inline">
-            <input id="s-output" type="text" spellcheck="false" placeholder="例如 E:\图片生成\output">
-            <button class="btn small" id="btn-validate-path">校验</button>
-            <button class="btn small" id="btn-open-dir">打开目录</button>
+            <!-- 只读：路径只能通过下面三个按钮改变，避免手打错路径 -->
+            <input id="s-output" type="text" spellcheck="false" readonly
+                   placeholder="点「浏览…」选择，或「新建」创建"
+                   title="路径为只读，请用右侧按钮操作">
+            <button class="btn small" id="btn-pick-dir" title="弹出系统目录选择框">🔍 浏览…</button>
+            <button class="btn small" id="btn-new-dir" title="在当前目录旁新建一个文件夹">➕ 新建</button>
+            <button class="btn small" id="btn-open-dir" title="在资源管理器中打开">📂 打开</button>
+            <button class="btn small" id="btn-validate-path" title="检查目录是否可写">校验</button>
           </div>
         </label>
-        <p class="snote" id="path-note">改路径不影响已生成的图片（旧图保留原地）。</p>
+        <p class="snote" id="path-note">
+          路径为<b>只读</b>，只能通过「浏览… / 新建 / 打开」操作，避免误改。
+          改路径不影响已生成的图片（旧图保留原地）。
+        </p>
         <div class="file-summary" id="file-summary">正在读取当前批次与参考图保存位置…</div>
         <h3 style="margin-top:25px"><span class="ico">📷</span> 效果图背景</h3>
         <p class="ghint">

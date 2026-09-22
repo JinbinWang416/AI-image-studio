@@ -376,6 +376,12 @@
       SELECTED_EFFECT_BACKGROUND_ID = null;
       renderProviderCards();
       renderPromptVersions();
+      // 保存路径的兜底显示需要 state 里的 output_base_root。
+      // 正常 loadState() 已经拉过；若用户打开设置太快（STATE 还是 null），补拉一次，
+      // 否则 `s-output` 会显示空白，让人以为没配置保存位置。
+      if (!STATE) {
+        try { STATE = await api('/api/state'); } catch (_) { /* 忽略，保持空白 */ }
+      }
       fillForm();
       selectSettingsPane('model');
       renderScope();
@@ -935,6 +941,20 @@
     });
   }
 
+  /**
+   * 从 `/api/state` 里取「实际生效的图片保存路径」。
+   *
+   * ⚠️ 字段位置别猜：`output_base_root` / `output_root` 在 **config 段**里，
+   *    顶层没有（早先写成 `STATE.output_base_root` 拿到 undefined，
+   *    导致路径框一直空白）。`batch.base_root` 也可以，它就是当前批次的根。
+   */
+  function effectiveOutputRoot() {
+    if (!STATE) return '';
+    const cfg = STATE.config || {};
+    const batch = STATE.batch || {};
+    return cfg.output_base_root || batch.base_root || cfg.output_root || '';
+  }
+
   function fillForm() {
     const g = SETTINGS.generation || {};
     const o = SETTINGS.output || {};
@@ -950,7 +970,9 @@
     $('s-retry').value = g.retry_max ?? 3;
     $('s-timeout').value = g.timeout ?? 120;
 
-    $('s-output').value = o.root || '';
+    // 保存路径：`output.root` 为空表示"用默认位置"（服务端按 output_base_root 解析）。
+    // 直接显示空字符串会让用户以为没设置，所以空值时回退到**实际生效的路径**。
+    $('s-output').value = o.root || effectiveOutputRoot() || '';
     $('s-timestamp').checked = !!o.timestamp_prefix;
     $('s-overwrite').checked = !!o.overwrite;
 
@@ -1032,7 +1054,15 @@
         timeout: parseFloat($('s-timeout').value) || 120,
       },
       output: {
-        root: $('s-output').value.trim(),
+        // 界面上显示的是**实际生效路径**（空配置时用 STATE 兜底）。
+        // 若它与默认位置相同，就存回空字符串，保持「跟随默认」的语义 ——
+        // 否则用户什么都没改，也会把默认路径固化成显式值，
+        // 将来项目搬家时那个旧路径就会失效。
+        root: (() => {
+          const v = $('s-output').value.trim();
+          const eff = effectiveOutputRoot();
+          return (eff && v === eff) ? '' : v;
+        })(),
         timestamp_prefix: $('s-timestamp').checked,
         overwrite: $('s-overwrite').checked,
         on_path_change: 'keep',
@@ -1460,6 +1490,64 @@
       });
       toast('已打开：' + d.path);
     } catch (e) { toast('打开失败：' + e.message, true); }
+  }
+
+  /**
+   * 弹出系统目录选择框。
+   *
+   * 后端用 tkinter 弹窗，**必须同机**（服务与浏览器在同一台机器）。
+   * 无显示环境会失败，此时后端返回原因，这里提示用户改用「新建」。
+   */
+  async function pickDir() {
+    const btn = $('btn-pick-dir');
+    const old = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '选择中…'; }
+    try {
+      const d = await api('/api/settings/pick-dir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ path: $('s-output').value.trim() }),
+      });
+      if (d.cancelled) { toast('已取消选择'); return; }
+      if (!d.ok) { toast(d.message || '无法选择目录', true); return; }
+      $('s-output').value = d.path;
+      await validatePath();          // 自动校验可写性
+      toast('已选择：' + d.path);
+    } catch (e) {
+      toast('选择失败：' + e.message, true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = old; }
+    }
+  }
+
+  /**
+   * 在当前保存目录**旁边**新建一个文件夹并切过去。
+   *
+   * 为什么是同级：保存目录的语义是"这批图片放哪"，换目录 = 换一个平级位置；
+   * 往里建子目录会让 output/ 越套越深。
+   */
+  async function newDir() {
+    const cur = $('s-output').value.trim();
+    const name = prompt(
+      '新建文件夹名称\n（会建在当前目录的同一级，并自动切换过去）\n\n当前：' + cur,
+      '');
+    if (name === null) return;                 // 取消
+    const dirName = name.trim();
+    if (!dirName) { toast('目录名不能为空', true); return; }
+
+    try {
+      const d = await api('/api/settings/new-dir', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: dirName, base: cur }),
+      });
+      if (!d.ok) { toast(d.message || '创建失败', true); return; }
+      $('s-output').value = d.path;
+      await validatePath();
+      toast(d.message || ('已创建 ' + dirName));
+    } catch (e) {
+      toast('创建失败：' + e.message, true);
+    }
   }
 
   async function regenerate(storeIdx, picIdx, btn) {
@@ -2047,6 +2135,11 @@
     $('s-size').addEventListener('change', renderQualityPreview);
     $('btn-validate-path').addEventListener('click', validatePath);
     $('btn-open-dir').addEventListener('click', openDir);
+    // 路径只读，只能靠这两个按钮改
+    const pickBtn = $('btn-pick-dir');
+    if (pickBtn) pickBtn.addEventListener('click', pickDir);
+    const newBtn = $('btn-new-dir');
+    if (newBtn) newBtn.addEventListener('click', newDir);
     $('btn-export-titles').addEventListener('click', () => exportFile('titles'));
     $('btn-export-checklist').addEventListener('click', () => exportFile('checklist'));
     $('btn-export-package').addEventListener('click', () => exportFile('package'));
