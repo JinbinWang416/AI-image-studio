@@ -4,6 +4,7 @@ __pycache__/
 *.egg-info/
 .venv/
 venv/
+build_venv312/
 
 # ---- 配置（含 API Key，绝不可提交）----
 .env
