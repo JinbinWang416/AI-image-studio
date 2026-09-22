@@ -1,0 +1,46 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# ---- 配置（含 API Key，绝不可提交）----
+.env
+config/settings.json
+
+# ---- 安全：账号与会话（含密码哈希，绝不可提交）----
+data/security/
+
+# ---- 测试产物 / 备份（非源码，不入库）----
+output_local_validation/
+output_local_professional_v9/
+backups/
+*.snapshots
+
+# ---- 安全：账号 / 会话 / 备份密钥（含密码哈希，绝不可提交）----
+data/security/
+*.snapshots
+
+# ---- 生成产物 ----
+output/
+logs/
+
+# ---- 调研原始资料（体积大，按需保留）----
+research/raw/
+
+# ---- 编辑器 / 系统 ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- 桌面版构建与隔离验证产物 ----
+desktop/build/
+desktop/dist/
+desktop/debug-build/
+desktop/debug-dist/
+desktop/installer-verification-*/
+desktop/installer-runtime-verification-*/
+门店贴纸图片生成智能体桌面安装包_*.exe
+门店贴纸图片生成智能体桌面安装包_*.exe.sha256

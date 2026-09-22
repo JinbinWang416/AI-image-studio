@@ -1,0 +1,69 @@
+{
+  "schema_version": "1.0",
+  "updated_at": "2026-09-19",
+  "project": {
+    "name": "门店贴纸图片自动生成智能体",
+    "language": "zh-CN",
+    "platform": "Windows 本地应用",
+    "purpose": "生成彩色门店玻璃静电贴设计图，并输出贴在门店玻璃上的效果图。"
+  },
+  "entrypoints": {
+    "web": ".\\.venv\\Scripts\\python.exe main.py web --host 127.0.0.1 --port 8000",
+    "test": ".\\.venv\\Scripts\\python.exe -m unittest discover -s tests -v",
+    "compile": ".\\.venv\\Scripts\\python.exe -m compileall -q app main.py",
+    "javascript_check": "node --check app\\web\\static\\app.js"
+  },
+  "source_map": {
+    "api_and_settings": "app/web/server.py",
+    "batch_orchestration": "app/orchestrator.py",
+    "prompt_quality": "app/prompt_profiles.py",
+    "effect_rendering": "app/effect_renderer.py",
+    "reference_assets": "app/reference_assets.py",
+    "provider_catalog": "app/providers/catalog.py",
+    "frontend": [
+      "app/web/static/index.html",
+      "app/web/static/app.js"
+    ],
+    "tests": "tests/"
+  },
+  "generation": {
+    "stores": 23,
+    "images_per_store": 6,
+    "default_concurrency": 1,
+    "supported_aspect_ratios": ["1:1", "4:5", "3:4", "16:9", "9:16"],
+    "modes": ["text_to_image", "image_to_image", "multi_image_to_image"],
+    "providers": ["qwen", "openai", "gemini", "seedream", "kling", "zhipu", "flux_local", "mock"],
+    "quality_levels": ["V1", "V2", "V3"],
+    "quality_policy": "每个新批次可提升一档真实感，最高 V3；中文主标题、副标题、行业主体、白色不透明背景和彩色可制作贴纸构图为基础质量规则。"
+  },
+  "delivery": {
+    "primary_target": "web",
+    "web_entry": ".\\.venv\\Scripts\\python.exe main.py web --host 127.0.0.1 --port 8000",
+    "frontend_root": "app/web/static/",
+    "desktop_installer_status": "frozen",
+    "scope_note": "2026-09-20 起以网页显示为唯一交付目标，不再更新桌面安装包。desktop/、tools/build_desktop_installer.ps1 与根目录 *.exe 冻结为历史产物；新功能验收只针对网页路径。"
+  },
+  "storage": {
+    "batches": "<output_root>/batch_*",
+    "generated_images": "<batch>/<store>/<store>生成图",
+    "effect_images": "<batch>/<store>/<store>效果图",
+    "reference_images": "<output_root>/_references",
+    "effect_backgrounds": "<output_root>/_effect_backgrounds",
+    "history_rule": "新批次不得覆盖历史批次；每个批次保存范围、比例、模型、提示词和参考资产快照。"
+  },
+  "effect_rendering": {
+    "method": "保留原始贴纸设计，再在本机合成到玻璃门店背景。",
+    "real_photo_rule": "用户上传的手机门店玻璃照片仅本地保存和使用；有照片时标记为 real_photo。",
+    "fallback_rule": "未上传照片时只能使用 simulated_storefront，界面和 manifest 必须明确显示为模拟门店背景。"
+  },
+  "security": {
+    "secret_files": ["config/settings.json", ".env"],
+    "do_not_persist": ["API Key", "Base64 图片内容", "完整敏感请求体"],
+    "testing": "测试只用 mock 或本机素材，禁止调用付费图像 API。"
+  },
+  "handoff": {
+    "codex_instructions": "AGENTS.md",
+    "deepseek_instructions": "DEEPSEEK_HANDOFF.md",
+    "human_overview": "README.md"
+  }
+}

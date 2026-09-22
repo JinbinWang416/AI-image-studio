@@ -1,0 +1,131 @@
+/* ============================================================================
+   弹窗尺寸统一规范（2026-09-20 全栈检查）
+   ----------------------------------------------------------------------------
+   检查发现的问题：
+
+     settings-modal  w=1240px  h=703px(固定)   ← 已修
+     history-modal   w=1120px  h=auto           ← 宽度不同 + 高度会跳动
+
+   两个弹窗属于同一层级（主界面的大弹窗），宽度却差 120px，切换时视觉上
+   像"两个不同的应用"。而且 history-modal 高度 auto → 内容多少决定高度。
+
+   本文件定义统一的**档位**，所有弹窗必须归入其中一档：
+
+     .modal-box.sm   确认框、提示框        min(520px, 96vw)   高度 auto
+     .modal-box.md   历史、对比、选择       min(1120px, 96vw)  固定 min(760px, 86vh)
+     .modal-box.lg   设置（双栏主弹窗）     min(1240px, 97vw)  固定 min(880px, 90vh)
+
+   规则：
+     · 同一档位的弹窗，宽高**完全一致**
+     · md / lg 用**固定高度**（切换内容不跳动）
+     · sm 用 auto（确认框内容本来就短，固定高度反而怪）
+   ============================================================================ */
+
+:root {
+  --modal-sm-w: min(520px, 96vw);
+  --modal-md-w: min(1120px, 96vw);
+  --modal-lg-w: min(1240px, 97vw);
+  --modal-md-h: min(760px, 86vh);
+  --modal-lg-h: min(880px, 90vh);
+}
+
+/* ---------------- 档位定义 ----------------
+   ⚠️ 只用**单类**或**双类**选择器，不要用 `:not()` / `:has()` 组合。
+      原因：`:not(.sm)` 会把特异性从 (0,2,0) 抬到 (0,3,0)，
+      从而**压过后面的媒体查询** —— 实测导致设置弹窗在窄屏下
+      绕过小屏规则，两个弹窗宽度不一致（1114px vs 1000px）。
+      档位已在 HTML 里显式标注（lg / md），无需再靠 :has 推断。 */
+.modal-box.sm {
+  width: var(--modal-sm-w);
+  max-height: 88vh;
+}
+.modal-box.md {
+  width: var(--modal-md-w);
+  height: var(--modal-md-h);
+  max-height: 90vh;
+}
+.modal-box.lg {
+  width: var(--modal-lg-w);
+  height: var(--modal-lg-h);
+  max-height: 92vh;
+}
+
+/* 兜底：若有人忘了标 class，双栏设置界面按 lg 处理（特异性与上面同级，
+   写在后面所以能覆盖 .md）。 */
+.modal-box:has(.settings-shell) {
+  width: var(--modal-lg-w);
+  height: var(--modal-lg-h);
+  max-height: 92vh;
+}
+
+/* 说明：早期这里有一条 `.modal-box.md:has(.settings-shell)` 兜底规则，
+   它的特异性 (0,3,0) 高于媒体查询里的 (0,2,0)，导致设置弹窗在窄屏下
+   **绕过**小屏规则 —— 两个弹窗宽度不一致（实测 1114px vs 1000px）。
+   由于 HTML 里已明确标注 lg/md，兜底不再需要，删除。 */
+
+/* ---------------- 内部结构统一 ---------------- */
+/* 任何固定高度的弹窗：头/尾固定，中间滚动 */
+.modal-box.md,
+.modal-box.lg {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.modal-box.md > .modal-head,
+.modal-box.lg > .modal-head,
+.modal-box.md > .modal-foot,
+.modal-box.lg > .modal-foot {
+  flex: 0 0 auto;
+}
+.modal-box.md > .modal-body,
+.modal-box.lg > .modal-body,
+.modal-box.md > .settings-shell,
+.modal-box.lg > .settings-shell {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.modal-box.md > .modal-body { overflow-y: auto; }
+
+/* ---------------- 滚动条统一 ---------------- */
+.modal-body::-webkit-scrollbar,
+.settings-content::-webkit-scrollbar { width: 10px; }
+.modal-body::-webkit-scrollbar-track,
+.settings-content::-webkit-scrollbar-track { background: transparent; }
+.modal-body::-webkit-scrollbar-thumb,
+.settings-content::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.modal-body::-webkit-scrollbar-thumb:hover,
+.settings-content::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+  background-clip: content-box;
+}
+
+/* ---------------- 小屏退化 ---------------- */
+/* ⚠️ 必须把 `:has(.settings-shell)` 也列进来：
+    部分浏览器给 :has() 计算的特异性高于同级 `.modal-box.lg`，
+    只写 .md/.lg 会导致设置弹窗（lg）在小屏下**不被覆盖** ——
+    表现为两个弹窗宽度不一致（实测 1114px vs 1000px）。 */
+@media (max-width: 1180px) {
+  .modal-box.md,
+  .modal-box.lg,
+  .modal-box:has(.settings-shell) {
+    width: min(1000px, 96vw);
+  }
+}
+@media (max-width: 900px) {
+  .modal-box.sm,
+  .modal-box.md,
+  .modal-box.lg,
+  .modal-box:has(.settings-shell) {
+    width: 96vw;
+  }
+  .modal-box.md,
+  .modal-box.lg,
+  .modal-box:has(.settings-shell) {
+    height: 88vh;
+  }
+}

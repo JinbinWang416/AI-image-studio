@@ -1,0 +1,32 @@
+# Render 部署配置（Infrastructure as Code）
+# 用法：
+#   1) 把本仓库推到 GitHub
+#   2) Render 控制台 → New → Blueprint → 连接该仓库 → 它会自动读取本文件创建服务
+#   或手动新建 Web Service 时，参考下面 startCommand / buildCommand / envVars 即可。
+#
+# 说明：
+#   - plan: free 为免费层；免费 Web Service 在 15 分钟无流量后会休眠，下次访问冷启动较慢（约 30~60s）。
+#   - $PORT 由 Render 自动注入；本应用 main.py 的 --port 接收它。
+#   - --i-know-its-public 是因为部署环境初始无账号，需先拉起服务，再在网页首次访问时创建管理员。
+#     账号创建后建议去掉该参数（但免费层磁盘为临时盘，重启会丢账号，故测试期可保留）。
+
+services:
+  - type: web
+    name: ai-image-studio
+    runtime: python
+    plan: free
+    region: oregon            # 亚洲就近可选 singapore
+    branch: main
+    buildCommand: pip install -r requirements.txt
+    startCommand: python main.py web --host 0.0.0.0 --port $PORT --i-know-its-public
+    healthCheckPath: /
+    envVars:
+      - key: PROVIDER
+        value: mock           # 零 API Key 即可跑通界面与模拟生成；要真实出图改为 qwen/openai 并填对应 Key
+      - key: PORT
+        sync: false           # 由 Render 自动注入，不要手动定值
+      # 真实出图示例（按需取消注释并填值，或在 Render 控制台 Environment 里添加）：
+      # - key: DASHSCOPE_API_KEY
+      #   value: sk-xxxxxxxx
+      # - key: OPENAI_API_KEY
+      #   value: sk-xxxxxxxx

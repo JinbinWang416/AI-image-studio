@@ -1,0 +1,145 @@
+/* ============================================================================
+   设置弹窗布局统一（2026-09-20）
+   ----------------------------------------------------------------------------
+   修复清单（全栈检查结论）：
+
+   P1 弹窗高度不固定
+      `.modal-box:has(.settings-shell)` 只设了 max-height，没设 height。
+      内容少的面板（质检与安全，3 字段）弹窗就矮，内容多的（模型服务，4 段）
+      就高 → 切换面板时弹窗**跳动**，视觉上很廉价。
+      → 改为固定高度 min(880px, 90vh)。
+
+   P2 .sgrid 用 auto-fit → 字段少时右侧留白
+      容器宽约 950px，minmax(190px,1fr) + auto-fit = 4 列。
+      「生成参数」5 个字段 → 第二行只剩 1 个，右边空 3 列；
+      「质检与安全」3 个字段 → 右边空 1 列。
+      而且 190px 的输入框**太窄**，长选项（如"4:5 竖版 · 1024 × 1280"）被截断。
+      → 改为固定 2 列（每列约 450px），需要 3 列的显式加 .c3。
+
+   P3 .scheck 的对齐 padding 在独占一行时反而产生空档
+      → 仅在与 sfield 同排时保留对齐。
+
+   P4 双重滚动条
+      `.settings-content` 已有 overflow-y:auto，门店列表内部又套了一层固定高度滚动。
+      → 内层改为跟随内容，只保留外层一个滚动条。
+
+   P5 底部操作区不统一
+      只有右下角一个「恢复默认」，与顶部「保存设置」分离。
+      → 增加统一的 .settings-foot（恢复默认 | 取消 | 保存）。
+
+   P6 面板切换时滚动位置未重置
+      从「模型服务」滚到底部后切到「生成参数」，仍停在底部。
+      → 切换时把内容区滚回顶部（由 JS 处理）。
+   ============================================================================ */
+
+/* ---------------- P1：弹窗高度 ---------------- */
+/* ⚠️ 高度与宽度已统一交给 `modal-sizes.css`（弹窗尺寸规范）管理。
+   这里只保留「设置弹窗内部」的伸缩约束，避免两处规则打架。 */
+.modal-box:has(.settings-shell) .modal-head { flex: 0 0 auto; }
+.modal-box:has(.settings-shell) .settings-shell {
+  flex: 1 1 auto;
+  min-height: 0;                  /* 关键：允许 grid 子项收缩以触发滚动 */
+  overflow: hidden;
+}
+
+/* ---------------- P2：统一的字段网格 ---------------- */
+.settings-content .sgrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px 18px;
+}
+.settings-content .sgrid.c3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* 奇数个字段时，最后一个占满整行 —— 避免"最后一行只剩一个、右边空一半"。
+   例：生成参数 5 个字段 → 2+2+1，最后一个跨列后变成 2+2+1(全宽)，视觉更整齐。
+   仅对直接子元素计数，不影响嵌套结构。 */
+.settings-content .sgrid > :last-child:nth-child(odd):not(:only-child) {
+  grid-column: 1 / -1;
+}
+/* 3 列布局下同理 */
+.settings-content .sgrid.c3 > :last-child:nth-child(3n + 1):not(:only-child) {
+  grid-column: 1 / -1;
+}
+.settings-content .sgrid.c3 > :last-child:nth-child(3n + 2):not(:only-child) {
+  grid-column: span 2;
+}
+
+/* 极窄屏退化为单列 */
+@media (max-width: 900px) {
+  .settings-content .sgrid,
+  .settings-content .sgrid.c3 {
+    grid-template-columns: 1fr;
+  }
+  .settings-content .sgrid > :last-child:nth-child(odd):not(:only-child),
+  .settings-content .sgrid.c3 > :last-child:nth-child(3n + 1):not(:only-child),
+  .settings-content .sgrid.c3 > :last-child:nth-child(3n + 2):not(:only-child) {
+    grid-column: auto;
+  }
+}
+
+/* 输入框宽度一致 */
+.settings-content .sfield input,
+.settings-content .sfield select {
+  min-width: 0;
+}
+
+/* ---------------- P3：勾选项对齐 ---------------- */
+/* 与 sfield 同排时，为了和"标签+输入框"的基线对齐而下移 */
+.settings-content .sgrid > .scheck { padding-top: 21px; }
+/* 独占一行（或成为该行第一个）时不需要下沉 */
+.settings-content .sgrid > .scheck:only-child { padding-top: 0; }
+.settings-content .sgrid > .scheck:first-child { padding-top: 21px; }
+/* 紧随全宽元素之后的勾选，取消下沉 */
+.settings-content .sgrid > .sfield.wide + .scheck { padding-top: 0; }
+
+/* ---------------- P5：统一的底部操作栏 ---------------- */
+.settings-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 22px;
+  border-top: 1px solid var(--border);
+  background: #fbfcfe;
+  flex: 0 0 auto;
+}
+.settings-foot .spacer { flex: 1 1 auto; }
+.settings-foot .hint {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+/* ---------------- 面板间距与标题统一 ---------------- */
+.settings-content .sgroup { margin-bottom: 22px; }
+.settings-content .sgroup h3 {
+  font-size: 14px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 12px;
+}
+/* 第一个 section 的标题不需要额外上边距 */
+.settings-content .settings-pane:first-child .sgroup:first-child h3,
+.settings-content .sgroup:first-child h3 { margin-top: 0; }
+
+/* 内容很少的面板：提示不要顶在最上面，给一点呼吸感 */
+.settings-content .sgroup .snote { margin-top: 10px; }
+
+/* ---------------- P4：门店列表去掉内层滚动 ---------------- */
+/* 只保留 .settings-content 一个滚动条 */
+.settings-content .store-scope-list,
+.settings-content .scope-list,
+.settings-content [data-scope-list] {
+  max-height: none !important;
+  overflow: visible !important;
+}
+
+/* ---------------- 滚动条美化（细一点，不抢视觉） ---------------- */
+.settings-content::-webkit-scrollbar { width: 10px; }
+.settings-content::-webkit-scrollbar-track { background: transparent; }
+.settings-content::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 99px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+.settings-content::-webkit-scrollbar-thumb:hover { background: #94a3b8; background-clip: content-box; }

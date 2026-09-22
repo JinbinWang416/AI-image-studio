@@ -1,0 +1,465 @@
+/* ============================================================================
+   UI 优化（2026-09-20）
+   依据：docs/UI优化规划_主界面信息架构.md + docs/UI优化规划_补充_内容区与日志区.md
+
+   解决的问题：
+     P1  状态被做成按钮        → 状态用 chip / badge
+     P2  合规警示被淹没        → 琥珀徽章 + 三重强化
+     P3  技术细节占黄金位      → 路径移除，批次号可复制
+     P4  进度条空间浪费        → 主数值放大 + 进度条弹性
+     P5  信息重复              → 去重
+     P6  四维度挤一行          → 按维度分区
+     P7  字号层次不足          → 三级制
+     P9  日志区空占 44% 屏高   → 默认收起
+     P10 日志区深色断裂        → 改浅色
+     P11 图片缺标识            → 序号 + 状态角标
+     P12 卡片右侧大片空白      → 网格自适应
+     P13 间距不均无圆角        → 统一 gap + radius
+     P14 模拟背景提示弱        → 图片角标 + 卡片标签
+   ============================================================================ */
+
+:root {
+  /* 字号三级制（P7） */
+  --fs-hero: 22px;
+  --fs-body: 13px;
+  --fs-meta: 11.5px;
+
+  /* 语义色 */
+  --status-ok: #16a34a;
+  --status-run: #4f46e5;
+  --status-warn: #d97706;
+  --status-error: #dc2626;
+  --status-idle: #94a3b8;
+
+  /* 徽章配色 */
+  --badge-warn-bg: #fef3c7;  --badge-warn-fg: #92400e;  --badge-warn-bd: #fcd34d;
+  --badge-info-bg: #eef2ff;  --badge-info-fg: #4338ca;  --badge-info-bd: #c7d2fe;
+  --badge-ok-bg:   #dcfce7;  --badge-ok-fg:   #15803d;  --badge-ok-bd:   #86efac;
+
+  /* 圆角与间距（P13） */
+  --r-card: 12px;
+  --r-thumb: 8px;
+  --gap-grid: 10px;
+}
+
+.row-spacer { flex: 1 1 auto; }
+
+/* ============================================================ 顶栏（P1/P8） */
+
+/* 配置信息：去掉胶囊背景，弱化为背景信息 */
+.config-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--fs-meta);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 46ch;
+}
+.config-line .pulse {
+  width: 7px; height: 7px; border-radius: 99px;
+  background: var(--status-ok);
+  box-shadow: 0 0 0 3px rgba(22, 163, 74, .15);
+  flex: 0 0 auto;
+}
+
+/* 运行状态 chip —— 状态不是按钮（P1） */
+.status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 11px;
+  border-radius: 99px;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  white-space: nowrap;
+  background: #f1f5f9;
+  color: #475569;
+}
+.status-chip .dot {
+  width: 7px; height: 7px; border-radius: 99px;
+  background: var(--status-idle);
+  flex: 0 0 auto;
+}
+.status-chip.running { background: #eef2ff; color: var(--status-run); }
+.status-chip.running .dot {
+  background: var(--status-run);
+  animation: chipPulse 1.4s ease-in-out infinite;
+}
+.status-chip.done { background: var(--badge-ok-bg); color: var(--badge-ok-fg); }
+.status-chip.done .dot { background: var(--status-ok); }
+.status-chip.error { background: #fee2e2; color: #b91c1c; }
+.status-chip.error .dot { background: var(--status-error); }
+
+@keyframes chipPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: .45; transform: scale(.8); }
+}
+
+/* ============================================================ 状态栏（P3/P4/P6/P14） */
+
+.statusbar {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+/* 行 1：主数值 + 进度 + 百分比 + 时长 */
+.progress-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.count-hero {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  flex: 0 0 auto;
+  min-width: 116px;
+}
+.count-hero strong {
+  font-size: var(--fs-hero);
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.5px;
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
+}
+.count-hero .unit {
+  font-size: var(--fs-meta);
+  color: var(--muted);
+}
+
+/* 进度条改为弹性宽度，不再占满整行（P4） */
+.progress {
+  flex: 1 1 auto;
+  height: 9px;
+  border-radius: 99px;
+  background: #e8edf3;
+  overflow: hidden;
+  position: relative;
+  max-width: 620px;
+}
+.progress .bar {
+  height: 100%;
+  width: 0;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6, #a855f7);
+  transition: width .4s cubic-bezier(.4, 0, .2, 1);
+}
+/* 运行时流光（Q3 决策） */
+.progress.running .bar {
+  background-image: linear-gradient(90deg, #6366f1, #8b5cf6, #a855f7,
+                                          #c4b5fd, #8b5cf6, #6366f1);
+  background-size: 220% 100%;
+  animation: barFlow 2.2s linear infinite;
+}
+@keyframes barFlow {
+  from { background-position: 0% 0; }
+  to   { background-position: -220% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .progress.running .bar { animation: none; }
+  .status-chip.running .dot { animation: none; }
+}
+
+.pct-inline {
+  flex: 0 0 auto;
+  min-width: 46px;
+  text-align: right;
+}
+.pct-inline strong {
+  font-size: 15px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: #475569;
+}
+
+.run-meta {
+  flex: 0 0 auto;
+  margin-left: auto;
+  font-size: var(--fs-meta);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+/* 行 2：徽章区 */
+.badge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  min-height: 24px;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  line-height: 1.5;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+.badge[hidden] { display: none; }
+.badge.warn { background: var(--badge-warn-bg); color: var(--badge-warn-fg);
+              border-color: var(--badge-warn-bd); }
+.badge.info { background: var(--badge-info-bg); color: var(--badge-info-fg);
+              border-color: var(--badge-info-bd); }
+.badge.ok   { background: var(--badge-ok-bg);   color: var(--badge-ok-fg);
+              border-color: var(--badge-ok-bd); }
+
+/* 批次 chip（P3：短标签 + 一键复制完整路径） */
+.batch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 5px 3px 10px;
+  border-radius: 99px;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  font-size: var(--fs-meta);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.batch-chip[hidden] { display: none; }
+.batch-chip .bc-label { color: var(--muted); }
+.batch-chip b {
+  color: #334155;
+  font-weight: 600;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 11px;
+}
+.copy-btn {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 99px;
+  transition: background .15s, color .15s;
+}
+.copy-btn:hover { background: #e2e8f0; color: #334155; }
+.copy-btn.copied { background: var(--badge-ok-bg); color: var(--badge-ok-fg); }
+
+.tech-meta {
+  font-size: var(--fs-meta);
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 52ch;
+}
+.tech-meta b { color: #475569; font-weight: 600; }
+
+/* ============================================================ 视图栏（P5/P6） */
+
+.image-viewbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.view-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.view-tab .tab-num {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: rgba(15, 23, 42, .07);
+  color: #475569;
+  min-width: 8px;
+  text-align: center;
+}
+.view-tab.active .tab-num { background: rgba(255, 255, 255, .28); color: #fff; }
+.view-tab .tab-num:empty { display: none; }
+
+/* ============================================================ 日志区（P9/P10） */
+
+.logpanel {
+  background: #f8fafc;
+  border-top: 1px solid var(--border);
+  color: #334155;
+}
+
+.logpanel .loghead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  cursor: pointer;
+  user-select: none;
+  font-size: var(--fs-meta);
+  font-weight: 600;
+  color: #475569;
+}
+.logpanel .loghead:hover { background: #f1f5f9; }
+
+.log-arrow {
+  display: inline-block;
+  font-size: 10px;
+  color: var(--muted);
+  transition: transform .18s;
+}
+.logpanel:not(.collapsed) .log-arrow { transform: rotate(90deg); }
+
+.log-count {
+  font-weight: 600;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.log-count.has-error { color: var(--status-error); }
+
+.logpanel pre#log {
+  margin: 0;
+  padding: 0 18px 12px;
+  max-height: 30vh;
+  overflow: auto;
+  font-family: ui-monospace, Consolas, "Cascadia Mono", monospace;
+  font-size: 11.5px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: #334155;
+}
+.logpanel.collapsed pre#log { display: none; }
+
+/* 日志行级别着色 */
+#log .lg-error { color: #b91c1c; font-weight: 600; }
+#log .lg-warn  { color: #b45309; }
+#log .lg-ok    { color: #15803d; }
+
+/* ============================================================ 内容区（P11/P12/P13/P14） */
+
+.stores {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+
+.store-card .thumbs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: var(--gap-grid);
+}
+
+/* 缩略图容器：承载角标 */
+.thumb {
+  position: relative;
+  border-radius: var(--r-thumb);
+  overflow: hidden;
+  aspect-ratio: 1 / 1;
+  background: #f1f5f9;
+}
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform .22s;
+}
+.thumb:hover img { transform: scale(1.045); }
+
+/* 序号角标（P11 / Q6：1~6） */
+.thumb .tn {
+  position: absolute;
+  top: 5px; left: 5px;
+  min-width: 17px; height: 17px;
+  padding: 0 4px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 5px;
+  background: rgba(15, 23, 42, .62);
+  color: #fff;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1;
+  backdrop-filter: blur(3px);
+  transition: opacity .18s;
+  pointer-events: none;
+}
+.thumb:hover .tn { opacity: 0; }
+
+/* 状态角标（右上） */
+.thumb .ts {
+  position: absolute;
+  top: 5px; right: 5px;
+  width: 17px; height: 17px;
+  display: inline-grid;
+  place-items: center;
+  border-radius: 99px;
+  font-size: 10px;
+  line-height: 1;
+  color: #fff;
+  background: var(--status-ok);
+  box-shadow: 0 1px 4px rgba(15, 23, 42, .25);
+  pointer-events: none;
+}
+.thumb .ts.pending { background: #94a3b8; }
+.thumb .ts.running { background: var(--status-run); }
+.thumb .ts.failed  { background: var(--status-error); }
+
+/* 模拟背景角标（左下，P14） */
+.thumb .tm {
+  position: absolute;
+  left: 5px; bottom: 5px;
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: rgba(217, 119, 6, .92);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.5;
+  letter-spacing: .3px;
+  pointer-events: none;
+}
+.thumb .tm[hidden] { display: none; }
+
+/* 卡片头的模拟背景标签（P14 第二重） */
+.store-card .bg-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--badge-warn-bg);
+  color: var(--badge-warn-fg);
+  border: 1px solid var(--badge-warn-bd);
+  font-size: 10.5px;
+  font-weight: 600;
+}
+.store-card .bg-tag[hidden] { display: none; }
+
+/* ============================================================ 响应式（步 9） */
+
+@media (max-width: 1320px) {
+  .tech-meta { max-width: 34ch; }
+  .config-line { max-width: 30ch; }
+}
+@media (max-width: 1120px) {
+  .run-meta { display: none; }
+  .tech-meta { display: none; }
+}
+@media (max-width: 900px) {
+  .config-line { display: none; }
+  .count-hero { min-width: 84px; }
+  .count-hero strong { font-size: 18px; }
+}
+@media (max-width: 720px) {
+  .stores { grid-template-columns: 1fr; }
+  .status-chip span:not(.dot) { display: none; }
+  .badge-row .badge { font-size: 10.5px; }
+}
