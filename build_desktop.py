@@ -23,10 +23,13 @@ import PyInstaller.__main__  # noqa: F401
 SEP = os.pathsep  # Windows 下为 ';'
 
 # 只读资源 -> 打进 _MEIPASS（运行时对应 PACKAGE_ROOT）
+# 注意：必须传绝对路径。PyInstaller 的 --specpath 会让相对路径以 spec 所在目录为基准，
+# 导致找不到资源。字体不走 assets/（professional_local.py 直接用 C:\Windows\Fonts 雅黑），
+# 故此处只打包 data 与前端静态目录。
+_BASE = os.path.dirname(os.path.abspath(__file__))
 ADD_DATA = [
-    ("data", "data"),
-    ("assets", "assets"),
-    ("app/web/static", "app/web/static"),
+    (os.path.join(_BASE, "data"), "data"),
+    (os.path.join(_BASE, "app", "web", "static"), "app/web/static"),
 ]
 
 
