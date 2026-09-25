@@ -85,7 +85,12 @@ with tempfile.TemporaryDirectory() as tmp:
     print(f"  去重: {'✅ 同一资产' if again.id == asset.id else '❌ 新资产'}")
 
     # 缓存：先清掉，再对比
-    from app.state import assets as reference_assets as ra
+    #
+    # ⚠️ 这里原来写的是 `from app.state import assets as reference_assets as ra`
+    #    —— 双 `as` 是语法错误，整个脚本根本无法编译。
+    #    Phase 1 分包时把生产版的 `from app import reference_assets as ra`
+    #    改写过来时多写了一层，而 `compileall` 的报错一直没人看。
+    from app.state import assets as ra
 
     ra._URL_CACHE.clear()
     import time
