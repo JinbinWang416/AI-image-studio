@@ -82,6 +82,28 @@
 - 生成压缩包的工具：`tools/make_portable_pack.py`（可移植包）、
   `tools/make_delivery_pack.py`（门店验证包）。
 
+### ⚠️ 改过代码后必须主动提醒更新发布包
+
+**Release 附件是「某次打包时的快照」，不会随代码自动更新。**
+只要动了 `app/`、`tools/`、`tests/`、`requirements*.txt` 等源码，
+就要**主动提醒用户**：GitHub Release 上的包已经落后于当前代码，
+需要重新打包并替换，否则别人下载到的还是旧版本。
+
+实测踩过：`v2.1.0` 的附件是 10:59 打的包，而当天 12:40 还在推修复
+（F-01~F-04），中间好几轮改动都没进包。
+
+重新发布的步骤：
+
+1. 重新打包（会顺带脱敏 `config/settings.json`）：
+   `.\.venv\Scripts\python.exe tools\make_portable_pack.py`
+2. 验证新包确实含最新代码（抽查几个标志性字符串），并确认 `api_key` 已清空
+3. **文件要改成 ASCII 名再上传** —— 实测 gh 在 Windows 下会把中文名写成 `_._xxx.zip`
+4. `gh release delete-asset` 删旧附件 → `gh release upload` 传新附件
+5. 清理 `_portable_stage/` 与临时副本（各约 700 MB）
+
+⚠️ `gh` 未持久化登录（git 凭据里的 token 缺 `read:org` scope），每次要用先从
+git 凭据管理器取：`git credential fill` → 设为 `GH_TOKEN` → 走 `7897` 代理。
+
 ## 协作方式（重要）
 
 ### 大段需求：先规划，等命令，再动手
