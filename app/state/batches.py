@@ -19,6 +19,13 @@ from .settings_store import SettingsStore
 _SAFE_BATCH = re.compile(r"^[A-Za-z0-9_.-]+$")
 BATCH_INFO_FILE = "_batch.json"
 
+# Windows 保留设备名：即使字符集合法，这些名字也不能当目录名
+_RESERVED = {
+    "con", "prn", "aux", "nul",
+    *(f"com{i}" for i in range(1, 10)),
+    *(f"lpt{i}" for i in range(1, 10)),
+}
+
 _VARIANTS = (
     "采用左下至右上的丝带动线，主标题处于视觉第一层，主体物件从右侧向中心聚焦。",
     "采用中心主视觉构图，主体物件放大并由环形色块、星芒与标签围绕，标题层级清晰。",
@@ -30,7 +37,32 @@ _VARIANTS = (
 
 
 def is_safe_batch_id(value: str) -> bool:
-    return bool(_SAFE_BATCH.fullmatch(value or ""))
+    """判断批次 ID 是否能安全地作为**单个目录名**拼到输出根目录下。
+
+    ⚠️ 光靠字符集白名单**不够**。
+       原来的实现是 `bool(_SAFE_BATCH.fullmatch(value or ""))`，
+       而那个正则 `^[A-Za-z0-9_.-]+$` 会把 `.`、`..`、`...` 全部放行 ——
+       这些名字与输出根目录拼接后会**跳出该目录**：
+
+           output_root / ".."          → 输出根目录的上一级
+           output_root / ".." / ".."   → 再往上一层
+
+       批次 ID 最终会写进 `cfg.output_root`，Storage 还会在那里建目录、写图片，
+       所以这是一个能读写任意相邻目录的**路径穿越**。
+       （纯点号名字在 Windows 上还会撞上保留名规则。）
+
+       这里额外挡掉：纯点号名字、Windows 保留设备名、首尾是 `-` 的名字。
+    """
+    v = (value or "").strip()
+    if not v or len(v) > 120:
+        return False
+    if set(v) <= {"."}:                       # "." / ".." / "..." 之类
+        return False
+    if v.startswith("-") or v.endswith("-"):
+        return False
+    if v.split(".")[0].lower() in _RESERVED:  # CON / NUL / COM1 …
+        return False
+    return bool(_SAFE_BATCH.fullmatch(v))
 
 
 def _part(value: str) -> str:

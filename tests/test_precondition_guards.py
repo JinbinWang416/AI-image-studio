@@ -21,6 +21,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from app.batches import is_safe_batch_id
 from app.providers import ProviderError, available_providers, get_provider
 from app.settings import SettingsStore
 
@@ -111,6 +112,55 @@ class ProviderPrecheckTests(unittest.TestCase):
             provider = "mock"
 
         _require_usable_provider(Cfg())      # 不应抛错
+
+
+class BatchIdTraversalTests(unittest.TestCase):
+    """P1-03：批次 ID 必须是**单个安全目录名**，不能跳出输出根目录。
+
+    旧实现只做字符集白名单 `^[A-Za-z0-9_.-]+$`，把 `.` / `..` 一并放行 ——
+    而批次 ID 会被直接拼到 `output_root` 后面（Storage 还在那里建目录、写图片），
+    于是 `output_root / ".."` 就指向了输出根目录的上一级。
+    """
+
+    def test_dot_segments_are_rejected(self) -> None:
+        for bad in (".", "..", "...", "....", " .. "):
+            self.assertFalse(is_safe_batch_id(bad), f"{bad!r} 不该被接受")
+
+    def test_empty_and_overlong_rejected(self) -> None:
+        for bad in ("", "   ", None, "a" * 200):
+            self.assertFalse(is_safe_batch_id(bad), f"{bad!r} 不该被接受")
+
+    def test_separators_rejected(self) -> None:
+        """反斜杠/斜杠从来不在字符集里，这里锁死不要放宽。"""
+        for bad in ("a/b", "a\\b", "../x", "..\\x", "C:", "a:b"):
+            self.assertFalse(is_safe_batch_id(bad), f"{bad!r} 含路径分隔符")
+
+    def test_reserved_device_names_rejected(self) -> None:
+        for bad in ("CON", "nul", "COM1", "lpt9", "con.txt", "PRN"):
+            self.assertFalse(is_safe_batch_id(bad), f"{bad!r} 是 Windows 保留设备名")
+
+    def test_leading_trailing_dash_rejected(self) -> None:
+        for bad in ("-x", "x-"):
+            self.assertFalse(is_safe_batch_id(bad), f"{bad!r} 首尾是连字符")
+
+    def test_real_batch_ids_still_accepted(self) -> None:
+        """不能误伤真实批次名（回归的重点：修穿越不能顺手把正常 ID 挡了）。"""
+        for good in (
+            "batch_20260919_014522_qwen_qwen-image-3.0",
+            "batch_20260101_000000",
+            "batch_x",
+            "a.b.c",
+        ):
+            self.assertTrue(is_safe_batch_id(good), f"{good!r} 是合法批次名，不该被拒")
+
+    def test_escape_demonstration(self) -> None:
+        """把「为什么危险」写进测试：拼接后确实会指向父目录。"""
+        root = Path(tempfile.mkdtemp(prefix="shs-batch-"))
+        self.assertNotEqual(
+            (root / "..").resolve(), root.resolve(),
+            "output_root / '..' 指向了别处 —— 这就是路径穿越",
+        )
+        self.assertFalse(is_safe_batch_id(".."), "所以 '..' 必须被拒绝")
 
 
 if __name__ == "__main__":
