@@ -1,0 +1,536 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AI生图平台</title>
+  <link rel="stylesheet" href="/static/tokens.css?v=2026.09.20">
+  <link rel="stylesheet" href="/static/app.css?v=2026.09.20">
+</head>
+<body>
+
+<!-- 登录 / 首次初始化遮罩：默认显示，确认已登录后才隐藏（避免业务界面闪现） -->
+<div id="login-overlay" class="login-overlay">
+  <div class="login-card">
+    <div class="login-brand"><span class="logo">◈</span> AI图片生成</div>
+    <h2 id="login-title">正在检查登录状态…</h2>
+    <div id="login-body"><p class="login-hint">请稍候…</p></div>
+  </div>
+</div>
+
+<header class="topbar">
+  <!-- ① 品牌区 -->
+  <div class="brand">
+    <span class="logo">◈</span>
+    <div class="brand-text">
+      <h1>AI生图平台</h1>
+      <p class="sub">门店玻璃贴纸智能设计平台</p>
+    </div>
+  </div>
+
+  <!-- ② 配置 · 状态 · 操作 -->
+  <div class="biz-actions">
+    <div class="config-line" id="current-config" title="当前生效的配置">
+      <span class="pulse"></span><span id="current-text">正在加载…</span>
+    </div>
+    <!-- 运行状态：状态用 chip，不用按钮（避免与操作混淆） -->
+    <span class="status-chip idle" id="run-status" role="status" aria-live="polite">
+      <span class="dot"></span><span id="run-status-text">空闲</span>
+    </span>
+    <button id="btn-run" class="btn primary">▶ 开始/继续</button>
+    <button id="btn-new-batch" class="btn">✨ 重新生成</button>
+    <button id="btn-stop" class="btn danger" disabled>■ 停止</button>
+  </div>
+
+  <!-- ③ 账号区（业务与账号之间用竖线分隔） -->
+  <div class="account-area">
+    <!-- 「设置」放最前：它是最高频的入口，系统管理只在管理员登录时才出现 -->
+    <button class="account-btn" id="btn-settings" type="button">设置</button>
+    <div class="dropdown" id="dd-system" hidden>
+      <button class="account-btn" id="btn-system" type="button" aria-haspopup="true" aria-expanded="false">
+        系统管理 <span class="caret">▾</span>
+      </button>
+      <div class="menu" id="menu-system" role="menu" hidden></div>
+    </div>
+    <span class="acct-divider" id="acct-divider" hidden></span>
+    <a class="account-btn" id="btn-home" href="/">主页</a>
+    <div class="dropdown" id="dd-user">
+      <button class="account-btn user" id="btn-user" type="button" aria-haspopup="true" aria-expanded="false">
+        <span class="uname" id="user-name">…</span><span class="caret">▾</span>
+      </button>
+      <div class="menu wide" id="menu-user" role="menu" hidden></div>
+    </div>
+  </div>
+</header>
+
+<div class="menu-backdrop" id="menu-backdrop" hidden></div>
+
+<section class="statusbar">
+  <!-- 行 1：主数值 · 进度 · 运行时长 -->
+  <div class="progress-row">
+    <div class="count-hero" title="已完成 / 总数">
+      <strong id="counts">0 / 138</strong><span class="unit">张</span>
+    </div>
+    <div class="progress" id="progress-track">
+      <div class="bar" id="bar"></div>
+    </div>
+    <div class="pct-inline"><strong id="pct">0%</strong></div>
+    <div class="run-meta" id="run-meta"></div>
+  </div>
+
+  <!-- 行 2：合规/质量徽章（左） · 批次与参数（右） -->
+  <div class="badge-row">
+    <span class="badge warn" id="badge-bg-mode" role="status" hidden></span>
+    <span class="badge info" id="badge-realism" hidden></span>
+    <span class="badge info" id="badge-print" hidden></span>
+    <span class="badge ok" id="badge-batch-state" hidden></span>
+    <span class="row-spacer"></span>
+    <span class="batch-chip" id="batch-chip" hidden>
+      <span class="bc-label">批次</span>
+      <b id="batch-label">—</b>
+      <button class="copy-btn" id="btn-copy-batch" type="button"
+              title="复制完整输出路径">⧉</button>
+    </span>
+    <span class="tech-meta" id="meta">正在加载…</span>
+  </div>
+</section>
+
+<section class="recovery-banner" id="recovery-banner" hidden aria-live="polite"></section>
+
+<main>
+  <section class="image-viewbar" aria-label="图片查看方式">
+    <div class="view-switch" role="group" aria-label="图片类型">
+      <button id="image-view-generated" class="view-tab active" type="button">
+        生成图<i class="tab-num" id="cnt-generated"></i>
+      </button>
+      <button id="image-view-effect" class="view-tab" type="button">
+        效果图<i class="tab-num" id="cnt-effect"></i>
+      </button>
+    </div>
+    <span class="view-count" id="image-view-count" hidden></span>
+    <span class="row-spacer"></span>
+    <button id="btn-generate-effects" class="btn small" type="button" hidden>🪟 补齐效果图</button>
+  </section>
+  <div class="stores" id="stores"></div>
+</main>
+
+<section class="logpanel collapsed" id="logpanel">
+  <div class="loghead" id="loghead" role="button" tabindex="0"
+       aria-expanded="false" aria-controls="log">
+    <span class="log-arrow" id="log-arrow">▸</span>
+    <span class="log-title">运行日志</span>
+    <span class="log-count" id="log-count">0</span>
+    <span class="row-spacer"></span>
+    <button id="btn-clear-log" class="btn tiny" type="button">清空</button>
+  </div>
+  <pre id="log"></pre>
+</section>
+
+<!-- ============================================================ 设置弹窗 -->
+<div class="modal" id="settings-modal" aria-hidden="true">
+  <div class="modal-box lg">
+
+    <div class="modal-head">
+      <h2><span class="ico">⚙</span> 设置</h2>
+      <div class="modal-head-actions">
+        <button id="btn-save-settings" class="btn primary">保存设置</button>
+        <button id="btn-close-settings" class="btn-close" title="关闭 (Esc)">✕</button>
+      </div>
+    </div>
+
+    <div class="modal-body settings-shell">
+      <aside class="settings-nav" id="settings-nav" aria-label="设置分类">
+        <button type="button" class="settings-nav-item active" data-pane="model">✦ 模型服务</button>
+        <button type="button" class="settings-nav-item" data-pane="local">🧪 本地模型</button>
+        <button type="button" class="settings-nav-item" data-pane="scope">☑ 生成范围</button>
+        <button type="button" class="settings-nav-item" data-pane="quality">✎ 提示词与质量</button>
+        <button type="button" class="settings-nav-item" data-pane="files">▣ 文件与保存</button>
+        <button type="button" class="settings-nav-item" data-pane="generation">⚙ 生成参数</button>
+        <button type="button" class="settings-nav-item" data-pane="safety">◈ 质检与安全</button>
+        <button type="button" class="settings-nav-item" data-pane="operations">◷ 运行与历史</button>
+      </aside>
+      <div class="settings-content">
+
+      <!-- 组 1：模型 API 配置 -->
+      <section class="sgroup settings-pane" data-pane="model">
+        <h3><span class="ico">🔌</span> 模型 API 配置</h3>
+        <p class="ghint">
+          选择要使用的服务商并填写 API Key。模型下拉中已标注<b>价格 / 是否支持负向提示词 / 限流</b>。
+        </p>
+        <div id="provider-cards" class="provider-cards"></div>
+      </section>
+
+      <section class="sgroup settings-pane" data-pane="model">
+        <h3><span class="ico">✦</span> DeepSeek 提示词优化</h3>
+        <p class="ghint">DeepSeek 只优化一次通用质量模板，不直接生成图片。优化结果需在“提示词与质量”中确认后才会写入新批次。</p>
+        <div class="sgrid">
+          <label class="scheck"><input type="checkbox" id="s-deepseek-enabled"><span>启用 DeepSeek 提示词优化</span></label>
+          <label class="sfield"><span>模型</span><input id="s-deepseek-model" type="text" spellcheck="false" placeholder="deepseek-flash"></label>
+        </div>
+        <div class="pcard-row" style="margin-top:10px">
+          <span>DeepSeek API Key</span>
+          <div class="keywrap">
+            <input id="s-deepseek-key" type="password" placeholder="粘贴 DeepSeek API Key" autocomplete="off">
+            <button class="eye" id="btn-deepseek-eye" type="button" title="显示/隐藏">👁</button>
+          </div>
+        </div>
+        <div class="pcard-row">
+          <span>Base URL</span>
+          <input id="s-deepseek-url" type="text" spellcheck="false" placeholder="https://api.deepseek.com">
+        </div>
+        <div class="inline" style="margin-top:10px;gap:10px">
+          <button class="btn small" id="btn-deepseek-test" type="button">测试 DeepSeek 连接</button>
+          <span class="testmsg" id="deepseek-testmsg"></span>
+        </div>
+      </section>
+
+      <section class="sgroup settings-pane local-validation" data-pane="local">
+        <h3><span class="ico">🧪</span> FLUX 本地样图验证</h3>
+        <p class="ghint">固定执行 <b>门店 01 · V8 · 6 张 · 单并发 · 1024×1024</b>，输出到独立的 <code>output_local_validation</code>，不调用云端。</p>
+        <div class="inline" style="flex-wrap:wrap;gap:8px">
+          <button class="btn small primary" id="btn-local-validation-run" type="button">运行本地样图验证</button>
+          <button class="btn small" id="btn-local-validation-refresh" type="button">刷新状态</button>
+        </div>
+        <p class="snote" id="local-validation-status">正在读取本地服务状态…</p>
+        <div class="local-validation-images" id="local-validation-images"></div>
+      </section>
+
+      <section class="sgroup settings-pane local-validation professional-validation" data-pane="local">
+        <h3><span class="ico">✨</span> V9 专业贴纸生成</h3>
+        <p class="ghint">参考高密度异形商业贴纸效果：每主题生成 <b>3 张无字彩色底图</b>，自动评分选优，再由程序精确叠加中文。固定为门店 01 的 6 个主题，共 18 次本地推理。</p>
+        <div class="inline" style="flex-wrap:wrap;gap:8px">
+          <button class="btn small primary" id="btn-professional-run" type="button">运行 V9 专业贴纸</button>
+          <button class="btn small" id="btn-professional-refresh" type="button">刷新 V9 状态</button>
+        </div>
+        <p class="snote" id="professional-status">正在读取 V9 状态…</p>
+        <div class="local-validation-images" id="professional-images"></div>
+      </section>
+
+      <!-- 生成范围 -->
+      <section class="sgroup settings-pane" data-pane="scope">
+        <h3><span class="ico">☑</span> 生成范围</h3>
+        <p class="ghint">选择需要出图的门店文件夹。保存后会成为新批次默认范围；正在进行的批次继续按创建时的范围执行。</p>
+        <div class="scope-toolbar">
+          <input id="scope-search" type="search" placeholder="搜索门店名称或编号">
+          <button type="button" class="btn small" id="btn-scope-all">全选</button>
+          <button type="button" class="btn small" id="btn-scope-none">全不选</button>
+          <button type="button" class="btn small" id="btn-scope-invert">反选</button>
+        </div>
+        <p class="scope-summary" id="scope-summary">正在读取门店范围…</p>
+        <div class="scope-list" id="scope-list"></div>
+      </section>
+
+      <!-- 提示词与质量 -->
+      <section class="sgroup settings-pane" data-pane="quality">
+        <h3><span class="ico">✎</span> 提示词与质量</h3>
+        <p class="ghint">质量模板会叠加到每张门店原始提示词。变量由门店数据自动填充，主标题与副标题保持锁定。</p>
+        <div class="work-tabs" id="quality-tabs">
+          <button type="button" class="work-tab active" data-quality-tab="base">基础</button>
+          <button type="button" class="work-tab" data-quality-tab="context">上下文</button>
+          <button type="button" class="work-tab" data-quality-tab="image">图像</button>
+        </div>
+        <div class="quality-panel" data-quality-panel="base">
+          <label class="sfield"><span>真实感基线</span>
+            <select id="pq-realism">
+              <option value="1">V1 · 自然印刷色彩</option>
+              <option value="2">V2 · 商业成品质感</option>
+              <option value="3">V3 · 专业实拍级还原</option>
+            </select>
+          </label>
+          <p class="snote">每创建一个新批次会自动提高一级，最高保持 V3；真实门店效果图还需在“文件与保存”上传该门店的手机实拍玻璃照片。</p>
+          <label class="sfield wide"><span>项目质量模板</span>
+            <textarea id="pq-template" rows="11" spellcheck="false"></textarea>
+          </label>
+          <div class="inline" style="margin-top:10px;flex-wrap:wrap">
+            <button class="btn small" id="btn-quality-optimize" type="button">✨ 用 DeepSeek 优化模板</button>
+            <label class="scheck compact"><input type="checkbox" id="pq-use-optimized"><span>本次使用优化结果</span></label>
+          </div>
+          <p class="snote" id="quality-msg">优化只生成预览；确认后才保存并创建新批次。</p>
+          <label class="sfield wide" style="margin-top:12px"><span>优化结果与差异对比</span>
+            <textarea id="pq-optimized" rows="11" spellcheck="false" placeholder="点击“用 DeepSeek 优化模板”后显示，可手动调整"></textarea>
+          </label>
+        </div>
+        <div class="quality-panel" data-quality-panel="context" hidden>
+          <p class="ghint">每张图会把下列变量替换进质量模板；原始行业提示词仍作为基础内容保留。</p>
+          <div class="variable-grid" id="pq-variables"></div>
+          <label class="sfield wide" style="margin-top:12px"><span>首张图片最终提示词预览</span>
+            <pre class="prompt-preview" id="pq-preview"></pre>
+          </label>
+        </div>
+        <div class="quality-panel" data-quality-panel="image" hidden>
+          <div class="work-tabs secondary" id="image-mode-tabs">
+            <button type="button" class="work-tab active" data-image-mode="text">文生图</button>
+            <button type="button" class="work-tab" data-image-mode="image">图生图</button>
+            <button type="button" class="work-tab" data-image-mode="multi">多图生图</button>
+          </div>
+          <p class="ghint" id="image-mode-note">文生图不使用参考图。</p>
+          <div id="reference-controls" hidden>
+            <label class="reference-drop" for="reference-upload">
+              <span>＋ 选择参考图片</span><small>支持 PNG、JPG、WEBP，单张不超过 10MB</small>
+              <input id="reference-upload" type="file" accept="image/png,image/jpeg,image/webp" multiple>
+            </label>
+            <div class="reference-assets" id="reference-assets"></div>
+          </div>
+        </div>
+        <div class="quality-confirm">
+          <button class="btn primary" id="btn-quality-confirm-run" type="button">确认保存并创建新批次</button>
+          <span>会保存范围、比例、提示词模板和参考图版本，并立即开始生成。</span>
+        </div>
+      </section>
+
+      <!-- 文件与保存 -->
+      <section class="sgroup settings-pane" data-pane="files">
+        <h3><span class="ico">📁</span> 文件与保存</h3>
+        <label class="sfield wide">
+          <span>图片保存路径</span>
+          <div class="inline">
+            <!-- 可直接编辑：支持手输 / 粘贴任意路径（含其它盘符）。
+                 保存时会自动校验可写性；也可点「校验」立即检查。 -->
+            <input id="s-output" type="text" spellcheck="false"
+                   placeholder="可直接输入或粘贴路径，如 F:\贴纸输出；也可点「浏览…」选择"
+                   title="可直接编辑；保存时会自动校验可写性">
+            <button class="btn small" id="btn-pick-dir" title="弹出系统目录选择框（可在其中新建文件夹）">🔍 浏览…</button>
+            <button class="btn small" id="btn-new-dir" title="新建文件夹并切换过去（支持输入完整路径换盘）">➕ 新建</button>
+            <button class="btn small" id="btn-open-dir" title="在资源管理器中打开">📂 打开</button>
+            <button class="btn small" id="btn-validate-path" title="检查目录是否可写，不可写时可一键创建">校验</button>
+          </div>
+        </label>
+        <p class="snote" id="path-note">
+          路径<b>可直接编辑</b>（也支持「浏览… / 新建 / 打开」）。
+          目录不存在时会提示是否创建；改路径不影响已生成的图片（旧图保留原地）。
+        </p>
+        <div class="file-summary" id="file-summary">正在读取当前批次与参考图保存位置…</div>
+        <h3 style="margin-top:25px"><span class="ico">📷</span> 效果图背景</h3>
+        <p class="ghint">
+          效果图会把生成贴纸合成到背景上。背景有三种来源，界面与清单都会<b>明确标记</b>：
+          <b>实拍</b>（你上传的手机照片）、<b>AI 生成</b>（本地合成的模拟门店，<b>非实拍</b>）、
+          <b>模拟</b>（没有任何背景时的占位场景）。
+        </p>
+        <label class="reference-drop" for="effect-background-upload">
+          <span>＋ 添加门店实拍玻璃照片</span><small>支持 PNG、JPG、WEBP，单张不超过 10MB；建议正面、自然光、玻璃区域完整可见</small>
+          <input id="effect-background-upload" type="file" accept="image/png,image/jpeg,image/webp" multiple>
+        </label>
+        <div class="reference-assets effect-background-assets" id="effect-background-assets"></div>
+        <div class="inline" style="gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+          <button class="btn small" id="btn-gen-ai-background" type="button">✨ 生成 AI 门店背景</button>
+          <button class="btn small" id="btn-reload-backgrounds" type="button">刷新列表</button>
+          <span class="snote" id="ai-bg-note">用当前服务商生成真实感空背景（不含贴纸文字），生成后自动加入上方列表。</span>
+        </div>
+        <p class="snote" id="effect-background-note">未选择背景时使用「模拟门店」场景，效果图会明确记录为模拟。</p>
+
+        <h3 style="margin-top:25px"><span class="ico">🎚</span> 效果图微调</h3>
+        <p class="ghint">
+          拖动滑块后点「预览」即时查看合成效果（**不写入任何批次**）。满意后点「保存参数」，
+          之后批量合成效果图都会使用这组参数。默认值来自 1688 电商主图的实测统计。
+        </p>
+        <div class="effect-preview-wrap">
+          <img id="effect-preview-img" alt="效果图预览" hidden>
+          <div class="effect-preview-empty" id="effect-preview-empty">尚未生成预览 —— 点下方「预览」按钮</div>
+        </div>
+        <div class="inline" style="gap:8px;margin:10px 0;flex-wrap:wrap;align-items:center">
+          <button class="btn small primary" id="btn-effect-preview" type="button">预览</button>
+          <button class="btn small" id="btn-effect-save" type="button">保存参数</button>
+          <button class="btn small" id="btn-effect-reset" type="button">恢复默认</button>
+          <span class="snote" id="effect-param-note"></span>
+        </div>
+        <div class="ep-presets" id="effect-param-presets"></div>
+        <div id="effect-param-groups" class="effect-param-groups"></div>
+
+        <div class="sgrid">
+          <label class="scheck"><input type="checkbox" id="s-timestamp"><span>文件名加时间戳前缀</span></label>
+          <label class="scheck"><input type="checkbox" id="s-overwrite"><span>覆盖已存在的图片</span></label>
+        </div>
+        <h3 style="margin-top:25px"><span class="ico">🖨</span> 印刷 TIF 导出</h3>
+        <p class="ghint">
+          批次完成后自动把 AI 出的 PNG 处理成印刷厂可直接 RIP 的多图层 TIF：
+          <b>CMYK 彩色层</b>、<b>白墨层</b>（玻璃静电贴必印）、<b>刀模线层</b>（模切用，不印色）、
+          <b>合并预览</b>与 <code>print_manifest.json</code>。输出到 <code>&lt;门店&gt;/印刷TIF/</code>。
+        </p>
+        <div class="sgrid">
+          <label class="sfield"><span>贴纸实际宽度（cm）</span>
+            <input id="s-print-width" type="number" step="1" min="1" max="500" value="60">
+          </label>
+          <label class="sfield"><span>目标 DPI</span>
+            <input id="s-print-dpi" type="number" step="50" min="72" max="1200" value="300">
+          </label>
+          <label class="sfield"><span>出血（mm）</span>
+            <input id="s-print-bleed" type="number" step="0.5" min="0" max="20" value="3">
+          </label>
+          <label class="sfield"><span>去背方式</span>
+            <select id="s-print-cutout">
+              <option value="auto">自动（有 AI 去背就用，推荐）</option>
+              <option value="rembg">强制 AI 去背（慢，适合复杂背景）</option>
+              <option value="fallback">纯色去背（快约 6 倍，适合纯净背景）</option>
+            </select>
+          </label>
+          <label class="scheck"><input type="checkbox" id="s-print-enabled">
+            <span>批次完成后自动导出</span></label>
+          <label class="scheck"><input type="checkbox" id="s-print-white">
+            <span>生成白墨层（玻璃静电贴必做）</span></label>
+          <label class="scheck"><input type="checkbox" id="s-print-dieline">
+            <span>生成刀模线层</span></label>
+        </div>
+        <p class="snote" id="print-export-note">
+          提示：60cm × 300DPI ≈ 7087px。若源图只有 1024px，成品尺寸达标但清晰度
+          等效约 43DPI —— manifest 会如实记录 <code>effective_dpi</code>。
+        </p>
+
+        <h3 style="margin-top:25px"><span class="ico">📤</span> 导出</h3>
+        <div class="inline" style="flex-wrap:wrap;gap:8px">
+          <button class="btn small" id="btn-export-titles">拼多多标题 CSV</button>
+          <button class="btn small" id="btn-export-checklist">人工抽检清单 CSV</button>
+          <button class="btn small" id="btn-export-package">打包当前批次 ZIP</button>
+        </div>
+        <p class="snote" id="export-note">导出文件保存在当前输出目录下。</p>
+      </section>
+
+      <!-- 生成参数 -->
+      <section class="sgroup settings-pane" data-pane="generation">
+        <h3><span class="ico">🎛</span> 生成参数</h3>
+        <div class="sgrid">
+          <label class="sfield">
+            <span>生成比例（新批次画布）</span>
+            <select id="s-size">
+              <option value="1024x1024">1:1 方形 · 1024 × 1024</option>
+              <option value="1024x1280">4:5 竖版 · 1024 × 1280</option>
+              <option value="1024x1536">2:3 竖版 · 1024 × 1536</option>
+              <option value="1280x1024">5:4 横版 · 1280 × 1024</option>
+              <option value="1536x1024">3:2 横版 · 1536 × 1024</option>
+            </select>
+          </label>
+          <label class="sfield">
+            <span>试跑张数</span>
+            <select id="s-limit">
+              <option value="0">全部 138 张</option>
+              <option value="6">6 张（1 套门店）</option>
+              <option value="12">12 张（2 套门店）</option>
+              <option value="30">30 张</option>
+              <option value="60">60 张</option>
+            </select>
+          </label>
+          <label class="sfield">
+            <span>并发数</span>
+            <input id="s-concurrency" type="number" min="1" max="32">
+          </label>
+          <label class="sfield">
+            <span>重试次数</span>
+            <input id="s-retry" type="number" min="0" max="10">
+          </label>
+          <label class="sfield">
+            <span>单次超时（秒）</span>
+            <input id="s-timeout" type="number" min="10" max="600">
+          </label>
+        </div>
+        <p class="snote" id="concurrency-note"></p>
+        <p class="snote">比例会写入新批次快照，并传给文生图、图生图和多图生图请求；继续当前批次时始终使用该批次创建时的比例。</p>
+      </section>
+
+      <!-- 组 4：质检与安全 -->
+      <section class="sgroup settings-pane" data-pane="safety">
+        <h3><span class="ico">🔍</span> 质检与安全</h3>
+        <div class="sgrid">
+          <label class="scheck"><input type="checkbox" id="s-qc"><span>启用 OCR 辅助质检</span></label>
+          <label class="sfield"><span>文字相似度阈值</span>
+            <input id="s-qc-sim" type="number" step="0.05" min="0" max="1">
+          </label>
+          <label class="sfield"><span>成本守卫上限（次调用）</span>
+            <input id="s-budget" type="number" min="1" max="5000">
+          </label>
+        </div>
+        <p class="snote warn">
+          ⚠️ 主流 OCR 对「笔画级错误」的检测能力为 <b>0</b>（TextPecker, CVPR 2026），
+          自动质检<b>不能替代人工目检</b>。
+        </p>
+      </section>
+
+      <!-- 提示词版本 -->
+      <section class="sgroup settings-pane" data-pane="quality">
+        <h3><span class="ico">✎</span> 提示词版本</h3>
+        <div class="sgrid">
+          <label class="sfield"><span>生成使用的提示词版本</span>
+            <select id="s-prompt-version"></select>
+          </label>
+          <label class="scheck"><input type="checkbox" id="s-whiten"><span>生成后把背景刷成纯白</span></label>
+        </div>
+        <p class="snote" id="prompt-version-note">
+          数据包里保存了 V1–V8 全部历史版本，可随时切换做效果对比。
+        </p>
+        <pre class="prompt-preview" id="prompt-preview"></pre>
+      </section>
+
+      <!-- 组 7：待处理项 -->
+      <section class="sgroup settings-pane" data-pane="operations">
+        <h3><span class="ico">🧯</span> 待处理项 <span class="tag-count" id="pending-badge">—</span></h3>
+        <div id="pending-list" class="pending-list">
+          <p class="snote">点击「刷新」查看失败与未生成的图片。</p>
+        </div>
+        <div class="inline" style="gap:8px;margin-top:10px">
+          <button class="btn small" id="btn-refresh-pending">刷新</button>
+          <button class="btn small primary" id="btn-retry-failures">一键重试全部</button>
+        </div>
+        <p class="snote" id="pending-note"></p>
+      </section>
+
+      <!-- 组 8：运行历史 -->
+      <section class="sgroup settings-pane" data-pane="operations">
+        <h3><span class="ico">📊</span> 运行历史</h3>
+        <p class="snote" id="runs-summary">—</p>
+        <div id="runs-list" class="runs-list"></div>
+        <button class="btn small" id="btn-refresh-runs" style="margin-top:10px">刷新</button>
+      </section>
+
+      </div>
+    </div>
+
+    <div class="modal-foot settings-foot">
+      <span id="settings-msg" class="msg"></span>
+      <span id="settings-foot-pane" class="hint"></span>
+      <span class="spacer"></span>
+      <button class="btn small" id="btn-reset-settings">恢复默认</button>
+      <!-- 内容长时用户滚到底部，不必再滚回顶部去保存 -->
+      <button class="btn small primary" id="btn-save-settings-foot">保存设置</button>
+    </div>
+
+  </div>
+</div>
+
+<div class="modal" id="history-modal" aria-hidden="true">
+  <div class="modal-box md">
+    <div class="modal-head">
+      <h2><span class="ico">🕘</span> <span id="history-title">历史版本对比</span></h2>
+      <button id="btn-close-history" class="btn-close" title="关闭 (Esc)">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="snote" id="history-note">
+        每次重新生成时，旧图会自动归档到该门店的 <code>_history/</code> 目录，可在此并排对比。
+      </p>
+      <div class="compare-grid" id="compare-grid"></div>
+    </div>
+  </div>
+</div>
+
+<div class="lightbox" id="lightbox">
+  <img id="lightbox-img" alt="">
+  <div class="lightbox-cap" id="lightbox-cap"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+<script>/* settingsUnifyBridged */
+// 底部「保存设置」→ 复用顶部按钮的逻辑，避免两处实现分叉
+(() => {
+  const foot = document.getElementById('btn-save-settings-foot');
+  const top = document.getElementById('btn-save-settings');
+  if (foot && top) {
+    foot.addEventListener('click', () => top.click());
+  }
+})();
+</script>
+
+  <script src="/static/login.js?v=1.0.0"></script>
+  <script src="/static/app.js?v=1.9.0"></script>
+    <script src="/static/topbar.js?v=1.0.2"></script>
+    <script src="/static/permissions-ui.js?v=1.0.0"></script>
+    <script src="/static/ui-2026.js?v=1.0.4"></script>
+    <script src="/static/settings-unify.js?v=1.0.2"></script>
+</body>
+</html>

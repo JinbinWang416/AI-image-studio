@@ -1,0 +1,64 @@
+/* ============================================================================
+   设计系统 · 单一真相源（tokens.css）
+   由 8 个样式表的 :root 合并而来；有意修复均以 ★ 注释标注。
+   注意：★ 必须写在注释（斜杠星号…星号斜杠）内，否则会被 CSS 解析器
+   当作非法声明「吞到下一个分号」，导致其后的令牌（如 --primary）整条丢失。
+   加载顺序：必须在 app.css 之前。
+   ============================================================================ */
+:root {
+
+  /* —— 基础调色板 / 中性 —— */
+  --bg: #f5f7fa;
+  --panel: #ffffff;
+  --border: #e3e8ef;
+  --text: #1a2332;
+  --muted: #566273;      /* ★ 原 #6b7785 对比度不足，提深以达 WCAG AA */
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --success: #16a34a;    /* ★ 与 --status-ok 统一为同一支绿 */
+  --danger: #dc2626;     /* ★ 补全原缺失的危险色 */
+  --warn: #d97706;       /* ★ 原 #f59e0b 偏亮，降亮提对比 */
+  --shadow: 0 1px 3px rgba(16, 24, 40, .06), 0 1px 2px rgba(16, 24, 40, .04);
+
+  /* —— 间距 / 圆角 —— */
+  --radius: 10px;
+
+  /* —— 字号刻度 —— */
+  --fs-hero: 22px;
+  --fs-body: 13px;
+  --fs-meta: 12px;       /* ★ 原 11.5px 在 125% 缩放下易糊，抬到可读下限 */
+
+  /* —— 语义色（状态） —— */
+  --status-ok: #16a34a;
+  --status-run: #4f46e5;
+  --status-warn: #d97706;
+  --status-error: #dc2626;
+  --status-idle: #94a3b8;
+
+  /* —— 徽章配色 —— */
+  --badge-warn-bg: #fef3c7;  --badge-warn-fg: #92400e;  --badge-warn-bd: #fcd34d;
+  --badge-info-bg: #eef2ff;  --badge-info-fg: #4338ca;  --badge-info-bd: #c7d2fe;
+  --badge-ok-bg: #dcfce7;  --badge-ok-fg:   #15803d;  --badge-ok-bd:   #86efac;
+
+  /* —— 其它 —— */
+  --r-card: 12px;
+  --r-thumb: 8px;
+  --gap-grid: 10px;
+
+  /* —— 弹窗档位 —— */
+  --modal-sm-w: min(520px, 96vw);
+  --modal-md-w: min(1120px, 96vw);
+  --modal-lg-w: min(1240px, 97vw);
+  --modal-md-h: min(760px, 86vh);
+  --modal-lg-h: min(880px, 90vh);
+
+  /* —— 层级表（浮层 z-index） —— */
+  --z-topbar: 1300;
+  --z-backdrop: 1100;
+  --z-modal: 2000;
+  --z-lightbox: 2100;
+  --z-toast: 3000;
+}
+
+/* 深色主题占位：后续 Phase 4 启用 data-theme=dark 时在此扩展 */
+/* 例: --bg:#0f172a; --panel:#1e293b; --border:#334155; --text:#e2e8f0; --muted:#94a3b8; */

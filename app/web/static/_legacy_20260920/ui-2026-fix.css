@@ -1,0 +1,54 @@
+/* ============================================================================
+   UI 优化 · 修正补丁（2026-09-20 第二轮）
+   ----------------------------------------------------------------------------
+   首轮上线后通过 CDP 实测发现 3 个问题，本文件修正：
+
+   ① 进度条被压成 0 宽
+      .progress 是 `flex: 1 1 auto`，左侧大数字 + 右侧百分比 + 运行时长
+      把它挤到 0。加 min-width 保底。
+
+   ② 单门店时卡片不拉伸
+      `.stores` 用 `auto-fill` —— 它「保留空轨道」，1 个卡片只占 1 列（404px），
+      右侧 2 列留白。改 `auto-fit` 让已有卡片拉伸占满。
+
+   ③ 缩略图间距仍是 6px
+      `.thumbs` 的 gap 被 style.css 的规则覆盖（同优先级、后者生效）。
+      这里用更高优先级的选择器覆盖。
+
+   ④ 「✓ 当前批次已完成」是 btn-run 的文案（app.js:294），
+      但它渲染成**蓝色主按钮** —— 状态被做成了按钮（问题 P1）。
+      批次完成时降级为次要样式，避免与「重新生成」抢注意力。
+   ============================================================================ */
+
+/* ① 进度条保底宽度 */
+.progress-row .progress {
+  min-width: 200px;
+}
+
+/* ② 卡片拉伸占满（单门店时不再右侧留白） */
+.stores {
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+}
+
+/* ③ 缩略图间距统一（覆盖 style.css 的 6px） */
+.stores .card .thumbs,
+.stores .store-card .thumbs {
+  gap: 10px;
+}
+
+/* ④ 批次已完成时的 btn-run：降级为「状态型」次要按钮 */
+.biz-actions .btn.done-state {
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid #e2e8f0;
+  font-weight: 600;
+  cursor: default;
+  box-shadow: none;
+}
+.biz-actions .btn.done-state:hover { filter: none; }
+
+/* 卡片头的「模拟背景」标签位置微调（避免与完成标记挤在一起） */
+.stores .card .bg-tag,
+.stores .store-card .bg-tag {
+  margin-left: 8px;
+}

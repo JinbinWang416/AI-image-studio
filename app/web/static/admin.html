@@ -1,0 +1,1733 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>管理后台 · AI生图平台</title>
+<style>
+:root{
+  --bg:#f5f7fa; --card:#fff; --border:#e2e8f0; --text:#0f172a;
+  --muted:#64748b; --primary:#4f46e5; --danger:#dc2626; --ok:#16a34a; --warn:#d97706;
+}
+*{box-sizing:border-box}
+body{margin:0;font:13.5px/1.6 -apple-system,"Segoe UI",system-ui,"Microsoft YaHei",sans-serif;
+     background:var(--bg);color:var(--text)}
+header{background:#1e293b;color:#fff;padding:12px 20px;display:flex;align-items:center;gap:14px}
+header h1{font-size:15px;margin:0;font-weight:600}
+header .sp{flex:1}
+header a{color:#c7d2fe;text-decoration:none;font-size:12.5px}
+header a:hover{text-decoration:underline}
+.tabs{display:flex;gap:2px;background:#1e293b;padding:0 20px}
+.tabs button{background:transparent;border:0;color:#94a3b8;padding:9px 16px;cursor:pointer;
+             font-size:13px;border-bottom:2px solid transparent}
+.tabs button.on{color:#fff;border-bottom-color:#818cf8}
+.tabs button:hover{color:#e2e8f0}
+main{padding:18px 20px 60px;max-width:1400px;margin:0 auto}
+section{display:none}
+section.on{display:block}
+.card{background:var(--card);border:1px solid var(--border);border-radius:11px;
+      padding:16px;margin-bottom:14px}
+.card h3{margin:0 0 12px;font-size:14px;display:flex;align-items:center;gap:8px}
+.card h3 .n{background:#eef2ff;color:#4338ca;border-radius:99px;padding:1px 9px;font-size:11.5px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:top}
+th{color:var(--muted);font-weight:600;font-size:11.5px;white-space:nowrap}
+tr:hover td{background:#f8fafc}
+input,select,textarea{border:1px solid #cbd5e1;border-radius:7px;padding:6px 9px;font-size:12.5px;
+                      font-family:inherit;outline:none}
+input:focus,select:focus{border-color:var(--primary);box-shadow:0 0 0 3px rgba(79,70,229,.13)}
+button.btn{background:var(--primary);color:#fff;border:0;border-radius:7px;padding:6px 13px;
+           cursor:pointer;font-size:12.5px}
+button.btn:hover{filter:brightness(1.08)}
+button.btn:disabled{opacity:.55;cursor:not-allowed}
+button.btn.ghost{background:#fff;color:var(--text);border:1px solid var(--border)}
+button.btn.danger{background:var(--danger)}
+button.btn.sm{padding:4px 9px;font-size:11.5px}
+.tag{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;font-weight:600}
+.tag.ok{background:#dcfce7;color:#15803d}
+.tag.off{background:#fee2e2;color:#b91c1c}
+.tag.warn{background:#fef3c7;color:#b45309}
+.tag.role{background:#eef2ff;color:#4338ca;margin-right:4px}
+.tag.risk{background:#fff1f2;color:#be123c}
+.muted{color:var(--muted);font-size:12px}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:9px}
+.perm{display:flex;gap:8px;align-items:flex-start;padding:7px 9px;border:1px solid var(--border);
+      border-radius:8px;background:#fff;font-size:12px}
+.perm input{margin-top:2px}
+.perm .name{font-weight:600}
+.perm .code{color:var(--muted);font-size:11px;font-family:ui-monospace,Consolas,monospace}
+.perm.group{grid-column:1/-1;background:#f8fafc;font-weight:600;color:var(--muted);
+            border-style:dashed}
+.msg{padding:9px 12px;border-radius:8px;font-size:12.5px;margin:10px 0}
+.msg.ok{background:#f0fdf4;color:#15803d}
+.msg.err{background:#fef2f2;color:#b91c1c}
+.msg[hidden]{display:none}
+.kv{display:grid;grid-template-columns:150px 1fr;gap:5px 12px;font-size:12.5px}
+.kv b{color:var(--muted);font-weight:600}
+dialog{border:0;border-radius:12px;padding:0;box-shadow:0 20px 60px rgba(15,23,42,.25);
+       max-width:620px;width:92%}
+dialog::backdrop{background:rgba(15,23,42,.45)}
+dialog .dh{padding:14px 18px;border-bottom:1px solid var(--border);font-weight:650}
+dialog .db{padding:16px 18px;max-height:62vh;overflow:auto}
+dialog .df{padding:12px 18px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end}
+pre{background:#0f172a;color:#e2e8f0;padding:11px;border-radius:8px;overflow:auto;
+    font-size:11.5px;max-height:340px}
+
+/* ============================================================ P1 看板样式 */
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 14px;
+}
+.kpi {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 11px 13px;
+}
+.kpi b {
+  display: block;
+  font-size: 21px;
+  font-weight: 700;
+  line-height: 1.2;
+  font-variant-numeric: tabular-nums;
+  color: #0f172a;
+}
+.kpi.danger b { color: #b91c1c; }
+.kpi span { font-size: 11.5px; color: var(--muted); }
+
+/* 纯 CSS 柱状图 */
+.chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 120px;
+  padding: 8px 4px 0;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow-x: auto;
+}
+.chart .bar-wrap {
+  flex: 1 0 10px;
+  min-width: 10px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  position: relative;
+}
+.chart .bar {
+  width: 100%;
+  background: linear-gradient(180deg, #818cf8, #6366f1);
+  border-radius: 3px 3px 0 0;
+  min-height: 2px;
+  transition: height .25s;
+}
+.chart .bar.has-fail {
+  background: linear-gradient(180deg, #fca5a5, #ef4444);
+}
+.chart .bar-wrap:hover .bar { filter: brightness(1.12); }
+.chart .bar-wrap .tip {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 5px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #0f172a;
+  color: #fff;
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  white-space: nowrap;
+  z-index: 5;
+}
+.chart .bar-wrap:hover .tip { display: block; }
+
+.top-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(230px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+}
+.top-grid h4 {
+  margin: 0 0 7px;
+  font-size: 12.5px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.top-list .it {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 12.5px;
+}
+.top-list .it .nm {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.top-list .it .bar-mini {
+  flex: 0 0 74px;
+  height: 6px;
+  background: #e2e8f0;
+  border-radius: 99px;
+  overflow: hidden;
+}
+.top-list .it .bar-mini i {
+  display: block;
+  height: 100%;
+  background: #6366f1;
+  border-radius: 99px;
+}
+.top-list .it .n {
+  flex: 0 0 44px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: #475569;
+}
+
+/* ============================================================ 权限矩阵 */
+.matrix-wrap {
+  overflow: auto;
+  max-height: 62vh;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+table.matrix {
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+  width: max-content;
+  min-width: 100%;
+}
+table.matrix th, table.matrix td {
+  padding: 6px 9px;
+  border-bottom: 1px solid var(--border);
+  border-right: 1px solid #f1f5f9;
+  white-space: nowrap;
+}
+table.matrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: #f8fafc;
+  font-weight: 600;
+  color: #475569;
+  font-size: 11.5px;
+}
+table.matrix th.perm-col, table.matrix td.perm-col {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: #fff;
+  text-align: left;
+  min-width: 210px;
+  border-right: 1px solid var(--border);
+}
+table.matrix thead th.perm-col { z-index: 3; background: #f8fafc; }
+table.matrix td.on { background: #f0fdf4; }
+table.matrix td.off { color: #cbd5e1; }
+table.matrix tr.grp td {
+  background: #f8fafc;
+  font-weight: 600;
+  color: var(--muted);
+  font-size: 11.5px;
+}
+table.matrix .yes { color: #16a34a; font-weight: 700; }
+table.matrix .no { color: #e2e8f0; }
+
+
+/* ============================================================ P2 样式 */
+.pager {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--muted);
+}
+.pager button { min-width: 30px; }
+
+/* 抽屉（右侧滑出） */
+.drawer {
+  border: 0;
+  padding: 0;
+  margin: 0 0 0 auto;
+  height: 100vh;
+  max-height: 100vh;
+  width: min(560px, 94vw);
+  border-radius: 0;
+  box-shadow: -12px 0 40px rgba(15, 23, 42, .18);
+}
+.drawer::backdrop { background: rgba(15, 23, 42, .38); }
+.drawer .dh {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 18px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: #fff;
+  z-index: 2;
+}
+.drawer .dh .nm { font-weight: 650; font-size: 14.5px; }
+.drawer .db { padding: 16px 18px 40px; overflow: auto; height: calc(100vh - 58px); }
+.drawer h4 {
+  margin: 18px 0 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 5px;
+}
+.drawer h4:first-child { margin-top: 0; }
+
+/* 失败行高亮 */
+table tr.row-denied td { background: #fffbeb; }
+table tr.row-error td { background: #fef2f2; }
+table tr.row-denied:hover td { background: #fef3c7; }
+table tr.row-error:hover td { background: #fee2e2; }
+
+/* 自动刷新开关 */
+.auto-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 99px;
+  font-size: 11.5px;
+  background: #f1f5f9;
+  color: #475569;
+  border: 1px solid transparent;
+}
+.auto-chip.on {
+  background: #eef2ff;
+  color: #4338ca;
+  border-color: #c7d2fe;
+}
+.auto-chip .dot { width: 6px; height: 6px; border-radius: 99px; background: #94a3b8; }
+.auto-chip.on .dot { background: #4f46e5; animation: chipPulse 1.6s ease-in-out infinite; }
+@keyframes chipPulse { 0%,100%{opacity:1} 50%{opacity:.35} }
+
+.kv-mini { display: grid; grid-template-columns: 92px 1fr; gap: 5px 10px; font-size: 12.5px; }
+.kv-mini b { color: var(--muted); font-weight: 600; }
+
+.perm-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.perm-chips .pc {
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: #eef2ff;
+  color: #4338ca;
+}
+.perm-chips .pc.risk { background: #fff1f2; color: #be123c; }
+
+
+/* ---------------- 审计看板柱状图（空桶可视化） ---------------- */
+.chart .bar.empty { background: #dfe5ec; min-height: 3px; }
+.chart .bar.has-data { background: linear-gradient(180deg, #818cf8, #6366f1); min-height: 4px; }
+.chart .bar.has-fail { background: linear-gradient(180deg, #fca5a5, #ef4444); min-height: 4px; }
+.chart .bar { border-radius: 3px 3px 0 0; }
+
+.chart-axis {
+  display: flex; gap: 3px; padding: 4px 4px 0;
+  font-size: 10.5px; color: var(--muted); overflow: hidden;
+}
+.chart-axis .ax {
+  flex: 1 0 10px; min-width: 10px; text-align: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.chart-axis .ax.empty-label { opacity: 0; }
+
+.chart-empty {
+  display: flex; align-items: center; justify-content: center;
+  height: 100%; color: var(--muted); font-size: 12.5px;
+  text-align: center; line-height: 1.7;
+}
+
+.chart-group {
+  background: #f8fafc; border: 1px solid var(--border);
+  border-radius: 10px; padding: 8px 4px 6px; overflow: hidden;
+}
+.chart-group .chart {
+  background: transparent; border: 0; border-radius: 0; padding: 0 4px;
+}
+
+</style>
+</head>
+<body>
+
+<header>
+  <h1>管理后台</h1>
+  <span class="muted" id="who" style="color:#94a3b8"></span>
+  <span class="sp"></span>
+  <a href="/">← 返回主界面</a>
+</header>
+
+<div class="tabs">
+  <button data-tab="users" class="on">用户管理</button>
+  <button data-tab="roles">角色与权限</button>
+  <button data-tab="sessions">会话监控</button>
+  <button data-tab="audit">审计中心</button>
+  <button data-tab="health">系统健康</button>
+  <button data-tab="backup">备份管理</button>
+</div>
+
+<main>
+  <div class="msg" id="msg" hidden></div>
+
+  <!-- 用户管理 -->
+  <section id="tab-users" class="on">
+    <div class="card">
+      <h3>新建用户</h3>
+      <div class="row">
+        <input id="nu-login" placeholder="登录名" style="width:150px">
+        <input id="nu-name" placeholder="显示姓名" style="width:130px">
+        <input id="nu-pw" type="password" placeholder="初始密码（≥10 位，三类字符）" style="width:250px">
+        <select id="nu-role" style="width:150px"></select>
+        <button class="btn" id="nu-go">创建</button>
+      </div>
+      <p class="muted" style="margin:8px 0 0">新用户默认要求首次登录后修改密码。</p>
+    </div>
+    <div class="card">
+      <h3>用户列表 <span class="n" id="u-count">0</span></h3>
+      <div class="row" style="margin-bottom:10px">
+        <input id="u-q" placeholder="搜索登录名 / 姓名 / ID" style="width:220px">
+        <select id="u-status" style="width:130px"><option value="">全部状态</option></select>
+        <select id="u-role" style="width:150px"><option value="">全部角色</option></select>
+        <button class="btn sm" id="u-search">搜索</button>
+        <button class="btn sm ghost" id="u-reset">重置</button>
+        <span style="flex:1"></span>
+        <select id="u-batch-act" style="width:150px">
+          <option value="">批量操作…</option>
+          <option value="disable">停用</option>
+          <option value="enable">启用</option>
+          <option value="unlock">解除锁定</option>
+        </select>
+        <button class="btn sm ghost" id="u-batch-go">执行</button>
+        <button class="btn sm ghost" id="u-export">导出 CSV</button>
+      </div>
+      <table><thead><tr>
+        <th style="width:28px"><input type="checkbox" id="u-all" title="全选"></th>
+        <th>登录名</th><th>显示姓名</th><th>状态</th><th>角色</th>
+        <th>会话</th><th>最近登录</th><th>操作</th>
+      </tr></thead><tbody id="u-body"></tbody></table>
+      <div class="pager" id="u-pager"></div>
+    </div>
+  </section>
+
+  <!-- 角色与权限 -->
+  <section id="tab-roles">
+    <div class="card">
+      <h3>角色 <span class="n" id="r-count">0</span></h3>
+      <table><thead><tr>
+        <th>编码</th><th>名称</th><th>用户数</th><th>权限数</th><th>说明</th><th>操作</th>
+      </tr></thead><tbody id="r-body"></tbody></table>
+      <div class="row" style="margin-top:12px">
+        <input id="nr-code" placeholder="新角色编码（小写字母数字）" style="width:230px">
+        <input id="nr-name" placeholder="显示名" style="width:150px">
+        <button class="btn ghost" id="nr-go">新建角色</button>
+        <select id="nr-copy" style="width:170px"><option value="">复制自…</option></select>
+      </div>
+
+    <div class="card">
+      <h3>权限矩阵
+        <span class="n" id="m-count"></span>
+        <button class="btn sm ghost" id="m-toggle" style="margin-left:auto">切换：逐角色配置</button>
+      </h3>
+      <p class="muted" style="margin:0 0 10px">
+        一张表看清「角色 × 权限」。🟢 表示该角色拥有此权限。
+        <b>🔴 高危</b>权限的授予会单独记入审计。
+      </p>
+      <div class="matrix-wrap" id="m-wrap"></div>
+      <p class="muted" style="margin:10px 0 0" id="m-stats"></p>
+    </div>
+    </div>
+  </section>
+
+  <!-- 会话监控 -->
+  <section id="tab-sessions">
+    <div class="card">
+      <h3>在线会话 <span class="n" id="s-count">0</span>
+        <span class="auto-chip" id="s-auto" style="margin-left:8px;cursor:pointer">
+          <span class="dot"></span><span id="s-auto-text">自动刷新：关</span>
+        </span>
+        <button class="btn sm ghost" id="s-cleanup" style="margin-left:auto">清理过期</button>
+        <button class="btn sm danger" id="s-revoke-all">全部下线</button>
+      </h3>
+      <table><thead><tr>
+        <th>用户</th><th>角色</th><th>来源 IP</th><th>最近活动</th>
+        <th>过期时间</th><th>客户端</th><th>操作</th>
+      </tr></thead><tbody id="s-body"></tbody></table>
+    </div>
+  </section>
+
+  <!-- 审计中心 -->
+  <section id="tab-audit">
+
+    <div class="card">
+      <h3>概览
+        <select id="a-range" style="margin-left:8px;font-size:12px">
+          <option value="1">最近 24 小时</option>
+          <option value="7" selected>最近 7 天</option>
+          <option value="30">最近 30 天</option>
+          <option value="90">最近 90 天</option>
+        </select>
+        <select id="a-bucket" style="font-size:12px">
+          <option value="hour">按小时</option>
+          <option value="day" selected>按天</option>
+        </select>
+        <button class="btn sm ghost" id="a-refresh">刷新</button>
+      </h3>
+      <div class="kpi-row">
+        <div class="kpi"><b id="kpi-total">—</b><span>总操作数</span></div>
+        <div class="kpi danger"><b id="kpi-failed">—</b><span>失败 / 拒绝</span></div>
+        <div class="kpi"><b id="kpi-rate">—</b><span>失败率</span></div>
+        <div class="kpi"><b id="kpi-actors">—</b><span>活跃操作者</span></div>
+      </div>
+      <div class="chart-group">
+        <div class="chart" id="a-chart"></div>
+        <div class="chart-axis" id="a-axis"></div>
+      </div>
+      <div class="top-grid">
+        <div><h4>Top 操作者</h4><div class="top-list" id="a-top-actors"></div></div>
+        <div><h4>Top 动作</h4><div class="top-list" id="a-top-actions"></div></div>
+        <div><h4>被拒绝最多的动作</h4><div class="top-list" id="a-top-denied"></div></div>
+      </div>
+      <p class="muted" style="margin:12px 0 0" id="a-window"></p>
+    </div>
+    <div class="card">
+      <h3>检索条件</h3>
+      <div class="row">
+        <select id="a-module" style="width:150px"><option value="">全部模块</option></select>
+        <input id="a-action" placeholder="动作关键词" style="width:170px">
+        <input id="a-target" placeholder="目标 ID / 路径" style="width:200px">
+        <select id="a-result" style="width:130px">
+          <option value="">全部结果</option>
+          <option value="success">成功</option>
+          <option value="denied">被拒绝</option>
+          <option value="error">错误</option>
+        </select>
+        <input id="a-limit" type="number" value="200" min="1" max="2000" style="width:90px">
+        <button class="btn" id="a-go">检索</button>
+        <button class="btn ghost" id="a-export">导出 NDJSON</button>
+      </div>
+      <p class="muted" style="margin:8px 0 0" id="a-stats"></p>
+    </div>
+    <div class="card">
+      <h3>记录 <span class="n" id="a-count">0</span></h3>
+      <table><thead><tr>
+        <th>时间</th><th>操作者</th><th>角色</th><th>模块</th><th>动作</th>
+        <th>目标</th><th>结果</th><th>请求 ID</th>
+      </tr></thead><tbody id="a-body"></tbody></table>
+      <div class="pager" id="a-pager"></div>
+    </div>
+  </section>
+
+  <!-- 系统健康 -->
+  <section id="tab-health">
+    <div class="card"><h3>版本与运行</h3><div class="kv" id="h-version"></div></div>
+    <div class="card"><h3>数据统计</h3><div class="kv" id="h-counts"></div></div>
+    <div class="card"><h3>磁盘占用</h3><div class="kv" id="h-storage"></div></div>
+
+    <div class="card">
+      <h3>磁盘明细与清理建议</h3>
+      <table><thead><tr>
+        <th>项目</th><th>路径</th><th>文件数</th><th>占用</th><th>建议</th>
+      </tr></thead><tbody id="disk-body"></tbody></table>
+    </div>
+
+    <div class="card">
+      <h3>一键清理
+        <button class="btn sm ghost" id="cl-preview" style="margin-left:auto">预览可清理项</button>
+      </h3>
+      <div id="cl-info" class="muted">点「预览」查看会删什么（不会立即执行）。</div>
+      <div class="row" id="cl-actions" style="margin-top:10px" hidden>
+        <label class="perm" style="flex:0 0 auto">
+          <input type="checkbox" id="cl-logs" checked><span>7 天前的运行日志</span></label>
+        <label class="perm" style="flex:0 0 auto">
+          <input type="checkbox" id="cl-sessions" checked><span>过期/已撤销的会话记录</span></label>
+        <label class="perm" style="flex:0 0 auto">
+          <input type="checkbox" id="cl-corrupt"><span>损坏文件残留（.corrupt.*）</span></label>
+        <button class="btn danger sm" id="cl-run">执行清理</button>
+      </div>
+      <p class="muted" style="margin:10px 0 0">
+        ⚠️ 只清理<b>明确安全</b>的项。<b>绝不触碰</b>批次图片、审计日志、备份文件、安全数据。
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>服务日志
+        <select id="lg-file" style="margin-left:8px;font-size:12px;max-width:280px"></select>
+        <button class="btn sm ghost" id="lg-refresh">刷新</button>
+      </h3>
+      <pre id="lg-body" style="background:#0f172a;color:#e2e8f0;max-height:340px">选择一个日志文件…</pre>
+    </div>
+  </section>
+
+  <!-- 备份管理 -->
+  <section id="tab-backup">
+    <div class="card">
+      <h3>创建备份</h3>
+      <div class="row">
+        <input id="bk-label" placeholder="备注（可选，如「升级前」）" style="width:200px">
+        <button class="btn" id="bk-create">立即创建备份</button>
+        <span class="muted" id="bk-key-note"></span>
+      </div>
+      <p class="muted" style="margin:8px 0 0">
+        备份包含：安全数据（账号/角色/会话）、审计日志、业务配置、各批次清单。
+        <b>不含图片</b>（体积原因）。文件经 <b>AES-256-GCM</b> 加密。
+      </p>
+    </div>
+
+    <div class="card">
+      <h3>备份新鲜度</h3>
+      <div id="bk-freshness" class="muted">读取中…</div>
+    </div>
+
+    <div class="card">
+      <h3>备份列表 <span class="n" id="bk-count">0</span></h3>
+      <table>
+        <thead><tr>
+          <th>创建时间</th><th>大小</th><th>文件数</th><th>加密</th><th>备注</th><th>操作</th>
+        </tr></thead>
+        <tbody id="bk-body"></tbody>
+      </table>
+      <p class="muted" style="margin:10px 0 0">
+        保留最近 <b id="bk-keep">10</b> 份，超出会自动清理最旧的。
+      </p>
+    </div>
+  </section>
+</main>
+
+
+<dialog class="drawer" id="u-drawer">
+  <div class="dh">
+    <span class="nm" id="ud-title">用户详情</span>
+    <span class="row-spacer" style="flex:1"></span>
+    <button class="btn ghost sm" id="ud-close">关闭</button>
+  </div>
+  <div class="db" id="ud-body"></div>
+</dialog>
+
+
+<dialog id="dlg">
+  <div class="dh" id="dlg-title">详情</div>
+  <div class="db" id="dlg-body"></div>
+  <div class="df"><button class="btn ghost" id="dlg-close">关闭</button></div>
+</dialog>
+
+<script>
+(() => {
+'use strict';
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s==null?'':s).replace(/[&<>"']/g,(c)=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+
+let ME = null, CATALOG = [], ROLES = [];
+
+function msg(text, ok = true) {
+  const el = $('msg');
+  el.className = 'msg ' + (ok ? 'ok' : 'err');
+  el.textContent = text;
+  el.hidden = false;
+  if (ok) setTimeout(() => { el.hidden = true; }, 4000);
+}
+
+async function api(path, options = {}) {
+  const res = await fetch(path, {
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (res.status === 401) { location.href = '/'; throw new Error('未登录'); }
+  let data = null;
+  try { data = await res.json(); } catch (_) {}
+  if (!res.ok) throw new Error((data && data.detail) || `HTTP ${res.status}`);
+  return data;
+}
+
+function can(code) { return ME && ME.permissions.includes(code); }
+
+// ---------------------------------------------------------------- 标签页
+document.querySelectorAll('.tabs button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b === btn));
+    document.querySelectorAll('section').forEach((s) => s.classList.toggle('on', s.id === 'tab-' + btn.dataset.tab));
+    ({users:loadUsers, roles:() => { loadRoles(); loadMatrix(); }, sessions:loadSessions,
+      audit:() => { loadAuditBoard(); loadAudit(); },
+      health:() => { loadHealth(); loadDisk(); loadLogList(); },
+      backup:loadBackups}[btn.dataset.tab] || (()=>{}))();
+  });
+});
+
+// ---------------------------------------------------------------- 用户
+async function loadUsers() {
+  const d = await api('/api/admin/users');
+  $('u-count').textContent = d.users.length;
+  $('nu-role').innerHTML = d.roles.map((r) => `<option value="${esc(r.code)}">${esc(r.name)}</option>`).join('');
+  $('u-body').innerHTML = d.users.map((u) => `
+    <tr>
+      <td><input type="checkbox" data-pick="${esc(u.id)}"></td>
+      <td><b>${esc(u.login_name)}</b></td>
+      <td>${esc(u.display_name)}</td>
+      <td><span class="tag ${u.status === 'active' ? 'ok' : 'off'}">${esc(u.status)}</span></td>
+      <td>${u.roles.map((r) => `<span class="tag role">${esc(r)}</span>`).join('') || '<span class="muted">无</span>'}</td>
+      <td>${u.sessions}</td>
+      <td class="muted">${esc((u.last_login_at || '—').replace('T', ' ').slice(0, 16))}</td>
+      <td>
+        <button class="btn sm ghost" data-u="${esc(u.id)}" data-act="roles">改角色</button>
+        <button class="btn sm ghost" data-u="${esc(u.id)}" data-act="status"
+                data-cur="${esc(u.status)}">${u.status === 'active' ? '停用' : '启用'}</button>
+        <button class="btn sm ghost" data-u="${esc(u.id)}" data-act="why">权限来源</button>
+        <button class="btn sm ghost" data-u="${esc(u.id)}" data-act="kick">强制下线</button>
+        <button class="btn sm ghost" data-u="${esc(u.id)}" data-act="resetpw">重置密码</button>
+      </td>
+    </tr>`).join('');
+
+  $('u-body').querySelectorAll('button[data-act]').forEach((b) => {
+    b.addEventListener('click', () => userAction(b.dataset.u, b.dataset.act, b.dataset.cur));
+  });
+}
+
+async function userAction(id, act, cur) {
+  try {
+    if (act === 'status') {
+      const next = cur === 'active' ? 'disabled' : 'active';
+      if (!confirm(next === 'disabled' ? '停用该账号？其所有登录会立即失效。' : '启用该账号？')) return;
+      await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ status: next }) });
+      msg(next === 'disabled' ? '已停用，该用户的会话已全部失效' : '已启用');
+      loadUsers();
+    } else if (act === 'kick') {
+      if (!confirm('强制该用户全部下线？')) return;
+      const r = await api(`/api/admin/users/${id}/revoke-sessions`, { method: 'POST' });
+      msg(`已撤销 ${r.revoked} 个会话`);
+      loadUsers();
+    } else if (act === 'roles') {
+      const all = ROLES.length ? ROLES : (await api('/api/admin/roles')).roles;
+      const d = await api('/api/admin/users');
+      const u = d.users.find((x) => x.id === id);
+      showDialog('修改角色', `
+        <p class="muted">当前：${u.roles.map(esc).join('、') || '无'}</p>
+        <div class="grid">${all.map((r) => `
+          <label class="perm"><input type="checkbox" value="${esc(r.code)}"
+            ${u.roles.includes(r.code) ? 'checked' : ''}>
+            <span><span class="name">${esc(r.name)}</span><br>
+            <span class="code">${esc(r.code)}</span></span></label>`).join('')}</div>
+        <p class="muted" style="margin-top:10px">⚠️ 改角色后该用户的登录会全部失效，需要重新登录。</p>`,
+        async () => {
+          const picked = [...$('dlg-body').querySelectorAll('input:checked')].map((i) => i.value);
+          if (!picked.length) { msg('至少选择一个角色', false); return false; }
+          await api(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify({ roles: picked }) });
+          msg('角色已更新，该用户的会话已失效');
+          loadUsers();
+          return true;
+        });
+    } else if (act === 'detail') {
+      await showUserDetail(id);
+    } else if (act === 'resetpw') {
+      const d = await api('/api/admin/users');
+      const u = d.users.find((x) => x.id === id);
+      resetUserPassword(id, u ? u.login_name : id);
+    } else if (act === 'why') {
+      const code = prompt('查看哪项权限的来源？例如 batch.delete');
+      if (!code) return;
+      const r = await api(`/api/admin/users/${id}/why?permission=${encodeURIComponent(code)}`);
+      showDialog('权限来源', `
+        <p><b>${esc(code)}</b> —— ${r.granted ? '<span class="tag ok">已授予</span>' : '<span class="tag off">未授予</span>'}</p>
+        <p class="muted">${esc(r.explanation)}</p>
+        ${r.sources.length ? '<ul>' + r.sources.map((s) => `<li>角色 <b>${esc(s.role)}</b>（${esc(s.name)}）：${esc(s.grants)}</li>`).join('') + '</ul>' : ''}`);
+    }
+  } catch (e) { msg(e.message, false); }
+}
+
+$('nu-go').addEventListener('click', async () => {
+  try {
+    await api('/api/admin/users', { method: 'POST', body: JSON.stringify({
+      login_name: $('nu-login').value.trim(),
+      display_name: $('nu-name').value.trim(),
+      password: $('nu-pw').value,
+      roles: [$('nu-role').value],
+    })});
+    msg('用户已创建');
+    $('nu-login').value = $('nu-name').value = $('nu-pw').value = '';
+    loadUsers();
+  } catch (e) { msg(e.message, false); }
+});
+
+// ---------------------------------------------------------------- 角色
+async function loadRoles() {
+  const d = await api('/api/admin/roles');
+  ROLES = d.roles;
+  CATALOG = d.catalog;
+  $('r-count').textContent = d.roles.length;
+  $('r-body').innerHTML = d.roles.map((r) => `
+    <tr>
+      <td><span class="code">${esc(r.code)}</span></td>
+      <td>${esc(r.name)}${r.builtin ? ' <span class="tag warn">内置</span>' : ''}</td>
+      <td>${r.user_count}</td>
+      <td>${r.permissions.length}</td>
+      <td class="muted">${esc(r.description || '')}</td>
+      <td>
+        <button class="btn sm ghost" data-r="${esc(r.code)}">配置权限</button>
+        ${r.builtin ? '' : `<button class="btn sm danger" data-del="${esc(r.code)}">删除</button>`}
+      </td>
+    </tr>`).join('');
+
+  $('r-body').querySelectorAll('button[data-r]').forEach((b) => {
+    b.addEventListener('click', () => editRole(b.dataset.r));
+  });
+  $('r-body').querySelectorAll('button[data-del]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      if (!confirm(`删除角色 ${b.dataset.del}？`)) return;
+      try { await api(`/api/admin/roles/${b.dataset.del}`, { method: 'DELETE' }); msg('已删除'); loadRoles(); }
+      catch (e) { msg(e.message, false); }
+    });
+  });
+}
+
+function editRole(code) {
+  const role = ROLES.find((r) => r.code === code);
+  if (!role) return;
+  const groups = {};
+  CATALOG.forEach((p) => { (groups[p.group] = groups[p.group] || []).push(p); });
+
+  const html = Object.entries(groups).map(([g, items]) => `
+    <div class="perm group">${esc(g)}</div>
+    ${items.map((p) => `
+      <label class="perm" title="${esc(p.description || '')}">
+        <input type="checkbox" value="${esc(p.code)}" ${role.permissions.includes(p.code) ? 'checked' : ''}>
+        <span><span class="name">${esc(p.name)}</span>
+          ${p.high_risk ? '<span class="tag risk">高危</span>' : ''}<br>
+          <span class="code">${esc(p.code)}</span></span>
+      </label>`).join('')}`).join('');
+
+  showDialog(`配置角色：${role.name}`, `
+    <p class="muted">勾选后点保存。高危权限的变更会单独记入审计。</p>
+    <div class="grid">${html}</div>`,
+    async () => {
+      const picked = [...$('dlg-body').querySelectorAll('input:checked')].map((i) => i.value);
+      const r = await api(`/api/admin/roles/${code}`, { method: 'PUT', body: JSON.stringify({
+        name: role.name, description: role.description, permissions: picked,
+      })});
+      const d = r.diff;
+      msg(`已保存：新增 ${d.added.length}、移除 ${d.removed.length}；`
+        + `${d.affected_users} 个用户的会话已失效`
+        + (d.high_risk_touched.length ? `；涉及高危权限 ${d.high_risk_touched.join('、')}` : ''));
+      loadRoles();
+      return true;
+    });
+}
+
+$('nr-go').addEventListener('click', async () => {
+  try {
+    await api('/api/admin/roles', { method: 'POST', body: JSON.stringify({
+      code: $('nr-code').value.trim(), name: $('nr-name').value.trim() || $('nr-code').value.trim(),
+    })});
+    msg('角色已创建（初始无任何权限，请手动勾选）');
+    $('nr-code').value = $('nr-name').value = '';
+    loadRoles();
+  } catch (e) { msg(e.message, false); }
+});
+
+// ---------------------------------------------------------------- 会话
+async function loadSessions() {
+  const d = await api('/api/admin/sessions');
+  $('s-count').textContent = d.sessions.length;
+  $('s-body').innerHTML = d.sessions.map((s) => `
+    <tr>
+      <td><b>${esc(s.user_name)}</b><br><span class="muted">${esc(s.login_name)}</span></td>
+      <td>${s.roles.map((r) => `<span class="tag role">${esc(r)}</span>`).join('')}</td>
+      <td class="code">${esc(s.ip || '—')}</td>
+      <td class="muted">${esc((s.last_seen_at || '').replace('T', ' ').slice(0, 19))}</td>
+      <td class="muted">${esc((s.expires_at || '').replace('T', ' ').slice(0, 19))}</td>
+      <td class="muted" title="${esc(s.user_agent)}">${esc((s.user_agent || '').slice(0, 40))}</td>
+      <td><button class="btn sm danger" data-s="${esc(s.id)}">强制下线</button></td>
+    </tr>`).join('');
+  $('s-body').querySelectorAll('button[data-s]').forEach((b) => {
+    b.addEventListener('click', async () => {
+      if (!confirm('强制该会话下线？')) return;
+      try { await api(`/api/admin/sessions/${b.dataset.s}`, { method: 'DELETE' }); msg('已下线'); loadSessions(); }
+      catch (e) { msg(e.message, false); }
+    });
+  });
+}
+
+// ---------------------------------------------------------------- 审计
+async function loadAudit() {
+  const q = new URLSearchParams();
+  if ($('a-module').value) q.set('module', $('a-module').value);
+  if ($('a-action').value) q.set('action', $('a-action').value);
+  if ($('a-target').value) q.set('target_id', $('a-target').value);
+  if ($('a-result').value) q.set('result', $('a-result').value);
+  q.set('limit', $('a-limit').value || '200');
+
+  const d = await api('/api/admin/audit?' + q.toString());
+  $('a-count').textContent = d.records.length;
+  const st = d.stats;
+  $('a-stats').textContent = `共 ${st.records} 条记录（${st.files} 个文件）；被拒绝 ${st.denied} 次，错误 ${st.errors} 次`;
+
+  if ($('a-module').options.length <= 1 && d.modules.length) {
+    $('a-module').innerHTML = '<option value="">全部模块</option>'
+      + d.modules.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  }
+
+  $('a-body').innerHTML = d.records.map((r) => {
+    const cls = r.result === 'success' ? 'ok' : (r.result === 'denied' ? 'warn' : 'off');
+    const label = { success: '成功', denied: '被拒绝', error: '错误' }[r.result] || r.result;
+    return `<tr>
+      <td class="muted">${esc((r.at || '').replace('T', ' ').slice(0, 19))}</td>
+      <td>${esc(r.actor_name || '—')}<br><span class="muted code">${esc((r.actor_id || '').slice(0, 8))}</span></td>
+      <td>${(r.actor_roles || []).map((x) => `<span class="tag role">${esc(x)}</span>`).join('')}</td>
+      <td>${esc(r.module || '')}</td>
+      <td><b>${esc(r.action || '')}</b></td>
+      <td class="code" title="${esc(r.target_id)}">${esc((r.target_id || '').slice(0, 46))}</td>
+      <td><span class="tag ${cls}">${esc(label)}</span></td>
+      <td class="code muted">${esc((r.request_id || '').slice(0, 10))}</td>
+    </tr>`;
+  }).join('');
+}
+
+$('a-go').addEventListener('click', () => loadAudit().catch((e) => msg(e.message, false)));
+$('a-export').addEventListener('click', () => {
+  const q = new URLSearchParams();
+  if ($('a-module').value) q.set('module', $('a-module').value);
+  q.set('limit', '5000');
+  location.href = '/api/admin/audit/export?' + q.toString();
+});
+
+// ---------------------------------------------------------------- 健康
+async function loadHealth() {
+  const d = await api('/api/admin/health');
+  const kv = (obj) => Object.entries(obj).map(([k, v]) => `<b>${esc(k)}</b><span>${esc(v)}</span>`).join('');
+  $('h-version').innerHTML = kv(d.version) + `<b>运行时长</b><span>${Math.round(d.uptime_seconds/60)} 分钟</span>`;
+  $('h-counts').innerHTML = kv(d.counts);
+  $('h-storage').innerHTML = Object.entries(d.storage_mb).map(([k, v]) => `<b>${esc(k)}</b><span>${v} MB</span>`).join('')
+    + `<b>审计记录</b><span>${d.audit.records} 条</span>`;
+}
+
+// ---------------------------------------------------------------- 对话框
+function showDialog(title, html, onOk) {
+  $('dlg-title').textContent = title;
+  $('dlg-body').innerHTML = html;
+  const footer = $('dlg').querySelector('.df');
+  footer.innerHTML = '<button class="btn ghost" id="dlg-cancel">取消</button>';
+  if (onOk) {
+    const ok = document.createElement('button');
+    ok.className = 'btn'; ok.textContent = '保存';
+    ok.addEventListener('click', async () => {
+      ok.disabled = true;
+      try { if (await onOk()) $('dlg').close(); } catch (e) { msg(e.message, false); }
+      finally { ok.disabled = false; }
+    });
+    footer.appendChild(ok);
+  }
+  footer.querySelector('#dlg-cancel').addEventListener('click', () => $('dlg').close());
+  $('dlg').showModal();
+}
+$('dlg-close').addEventListener('click', () => $('dlg').close());
+
+
+
+// ================================================================ 审计看板（P1-1）
+async function loadAuditBoard() {
+  const days = $('a-range').value;
+  const bucket = $('a-bucket').value;
+  const d = await api(`/api/admin/audit/stats?days=${days}&bucket=${bucket}`);
+
+  $('kpi-total').textContent = d.total;
+  $('kpi-failed').textContent = d.failed;
+  $('kpi-rate').textContent = d.failed_rate + '%';
+  $('kpi-actors').textContent = (d.top_actors || []).length;
+
+  // 柱状图：高度按最大值归一化
+  //
+  // ⚠️ 空桶必须与"图表坏了"区分开：
+  //    默认窗口是"最近 7 天"，但常常只有 1 天有操作，其余为 0。
+  //    若空桶高度就是 0%，整张图会只剩一根柱子 + 大片空白，看起来像渲染失败。
+  //    这里给空桶一个 3px 的浅灰底线（.bar.empty），一眼能看出"确实是 0"。
+  const bs = d.buckets || [];
+  const max = Math.max(1, ...bs.map((b) => b.n));
+  const total = bs.reduce((s, b) => s + b.n, 0);
+
+  if (!bs.length) {
+    $('a-chart').innerHTML =
+      '<div class="chart-empty">该窗口内没有审计记录</div>';
+    $('a-axis').innerHTML = '';
+  } else if (total === 0) {
+    $('a-chart').innerHTML =
+      `<div class="chart-empty">最近 ${d.window.days} 天没有任何操作记录<br>`
+      + '<span style="font-size:11.5px">（换一个时间范围，或等待产生新的操作）</span></div>';
+    $('a-axis').innerHTML = '';
+  } else {
+    $('a-chart').innerHTML = bs.map((b) => {
+      const isZero = b.n === 0;
+      // 空桶给固定 3px 底线；非空桶按最大值归一化，且至少 4% 保证可见
+      const style = isZero ? 'height:3px' : `height:${Math.max(4, Math.round((b.n / max) * 100))}%`;
+      const cls = isZero ? 'bar empty'
+        : (b.failed > 0 ? 'bar has-fail' : 'bar has-data');
+      const label = b.t.replace('T', ' ');
+      const tip = isZero
+        ? `${label}　无操作`
+        : `${label}　${b.n} 条${b.failed ? `（失败 ${b.failed}）` : ''}`;
+      return `<div class="bar-wrap">
+        <div class="${cls}" style="${style}"></div>
+        <div class="tip">${esc(tip)}</div>
+      </div>`;
+    }).join('');
+
+    // X 轴：稀疏显示（最多 8 个标签），避免拥挤
+    const step = Math.max(1, Math.ceil(bs.length / 8));
+    $('a-axis').innerHTML = bs.map((b, i) => {
+      const show = i % step === 0 || i === bs.length - 1;
+      const short = b.t.length > 10 ? b.t.slice(5) : b.t;   // 去掉年份前缀
+      return `<span class="ax ${show ? '' : 'empty-label'}">${esc(show ? short : '')}</span>`;
+    }).join('');
+  }
+
+  const renderTop = (id, items) => {
+    const box = $(id);
+    if (!items || !items.length) { box.innerHTML = '<p class="muted">—</p>'; return; }
+    const m = Math.max(1, ...items.map((x) => x.n));
+    box.innerHTML = items.map((x) => `
+      <div class="it">
+        <span class="nm" title="${esc(x.name)}">${esc(x.name)}</span>
+        <span class="bar-mini"><i style="width:${Math.round(x.n / m * 100)}%"></i></span>
+        <span class="n">${x.n}</span>
+      </div>`).join('');
+  };
+  renderTop('a-top-actors', d.top_actors);
+  renderTop('a-top-actions', d.top_actions);
+  renderTop('a-top-denied', d.top_denied);
+
+  $('a-window').textContent =
+    `统计窗口：最近 ${d.window.days} 天（自 ${d.window.since} 起，粒度 ${bucket === 'hour' ? '小时' : '天'}）`
+    + (d.truncated ? '　⚠️ 记录过多，已截断到 50000 条' : '');
+}
+
+// ================================================================ 权限矩阵（P1-2）
+let MATRIX_DATA = null;
+
+async function loadMatrix() {
+  const d = await api('/api/admin/roles/matrix');
+  MATRIX_DATA = d;
+  $('m-count').textContent = `${d.roles.length} 角色 × ${d.stats.total_permissions} 权限`;
+
+  const head = d.roles.map((r) =>
+    `<th title="${esc(r.description || '')}">${esc(r.name)}<br>
+      <span style="font-weight:400;color:#94a3b8">${r.user_count} 人</span></th>`).join('');
+
+  const body = (d.groups || []).map((g) => {
+    const grpRow = `<tr class="grp"><td class="perm-col">${esc(g.name)}</td>`
+      + `<td colspan="${d.roles.length}"></td></tr>`;
+    const rows = g.permissions.map((p) => {
+      const cells = d.roles.map((r) => {
+        const on = d.matrix[r.code] && d.matrix[r.code][p.code];
+        return `<td class="${on ? 'on' : 'off'}" style="text-align:center">`
+          + `<span class="${on ? 'yes' : 'no'}">${on ? '●' : '○'}</span></td>`;
+      }).join('');
+      return `<tr>
+        <td class="perm-col">
+          ${esc(p.name)} ${p.high_risk ? '<span class="tag risk">高危</span>' : ''}<br>
+          <span class="code">${esc(p.code)}</span>
+        </td>${cells}</tr>`;
+    }).join('');
+    return grpRow + rows;
+  }).join('');
+
+  $('m-wrap').innerHTML = `
+    <table class="matrix">
+      <thead><tr><th class="perm-col">权限</th>${head}</tr></thead>
+      <tbody>${body}</tbody>
+    </table>`;
+
+  const s = d.stats;
+  const notes = [];
+  if (s.orphan_permissions.length) {
+    notes.push(`<span class="tag warn">没有任何角色拥有</span> ${s.orphan_permissions.map(esc).join('、')}`);
+  }
+  if (s.empty_roles.length) {
+    notes.push(`<span class="tag warn">没有任何权限的角色</span> ${s.empty_roles.map(esc).join('、')}`);
+  }
+  $('m-stats').innerHTML = notes.length ? notes.join('<br>') : '✅ 没有孤立的权限或空角色';
+}
+
+// ================================================================ 备份管理
+async function loadBackups() {
+  const d = await api('/api/admin/backup/list');
+  $('bk-count').textContent = d.backups.length;
+  $('bk-keep').textContent = d.keep;
+
+  // 新鲜度：用颜色区分（这是"备份是否还管用"的直观信号）
+  const f = d.freshness || {};
+  const box = $('bk-freshness');
+  if (!f.count) {
+    box.innerHTML = '<span class="tag off">尚无备份</span> '
+      + '<span class="muted">建议立即创建一份 —— 没有备份时，数据损坏将无法恢复。</span>';
+  } else {
+    const stale = f.stale;
+    const tag = stale ? '<span class="tag warn">偏旧</span>' : '<span class="tag ok">新鲜</span>';
+    box.innerHTML = `${tag} 最近一次：<b>${esc(f.latest_at || '—')}</b>`
+      + `（${f.age_hours == null ? '?' : f.age_hours} 小时前，${f.latest_kb} KB）`
+      + (stale ? ' <span class="muted">超过 24 小时未备份，建议创建一份。</span>' : '');
+  }
+
+  $('bk-body').innerHTML = d.backups.map((b) => `
+    <tr>
+      <td>${esc(b.created_at)}</td>
+      <td>${b.size_kb} KB</td>
+      <td>${b.file_count || '—'}</td>
+      <td>${b.encrypted ? '<span class="tag ok">已加密</span>' : '<span class="tag off">未加密</span>'}</td>
+      <td class="muted">${esc(b.label || '')}</td>
+      <td>
+        <button class="btn sm danger" data-bk="${esc(b.id)}">恢复此备份</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="6" class="muted">暂无备份</td></tr>';
+
+  $('bk-body').querySelectorAll('button[data-bk]').forEach((btn) => {
+    btn.addEventListener('click', () => restoreBackup(btn.dataset.bk));
+  });
+}
+
+$('bk-create').addEventListener('click', async () => {
+  const btn = $('bk-create');
+  btn.disabled = true;
+  try {
+    const d = await api('/api/admin/backup/create',
+      { method: 'POST', body: JSON.stringify({ label: $('bk-label').value.trim() || 'manual' }) });
+    msg(`备份已创建（${d.backup.size_kb} KB，${d.backup.file_count} 个文件）`);
+    if (d.key_created) {
+      $('bk-key-note').innerHTML =
+        '<span class="tag warn">新密钥已生成</span> 请把 '
+        + '<code>data/security/.backup_key</code> 复制到别处保管 —— 密钥丢失将无法解密备份！';
+    }
+    loadBackups();
+  } catch (e) { msg(e.message, false); }
+  finally { btn.disabled = false; }
+});
+
+/**
+ * 恢复备份 —— 破坏性操作，必须手工输入备份 ID 才能执行。
+ * 用「输入 ID」而不是「点确定」，是为了让用户**无法下意识地点过去**。
+ */
+function restoreBackup(backupId) {
+  showDialog('恢复备份（危险操作）', `
+    <div class="msg err" style="margin:0 0 12px">
+      <b>这会用备份内容覆盖当前数据。</b>
+      为避免误操作，请手工输入下面这串备份 ID 以确认：
+    </div>
+    <p style="margin:0 0 8px"><code style="user-select:all;background:#f1f5f9;padding:4px 8px;border-radius:6px">${esc(backupId)}</code></p>
+    <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px">在此粘贴 / 输入：</label>
+    <input id="bk-confirm" style="width:100%;box-sizing:border-box" placeholder="必须与上面完全一致">
+    <div class="muted" style="margin-top:10px;line-height:1.7">
+      · 系统会<b>先自动创建一份「还原前备份」</b>，万一恢复错了可以用它回滚<br>
+      · <b>审计日志不参与恢复</b>（它是只追加的事实记录，回滚它会销毁操作历史）
+    </div>`,
+    async () => {
+      const typed = ($('bk-confirm').value || '').trim();
+      if (typed !== backupId) { msg('确认 ID 不一致，已取消', false); return false; }
+      const r = await api('/api/admin/backup/restore',
+        { method: 'POST', body: JSON.stringify({ backup_id: backupId, confirm: typed }) });
+      showDialog('恢复完成', `
+        <p>${esc(r.message || '')}</p>
+        ${r.pre_restore_backup
+          ? `<p>回滚点：<code style="user-select:all">${esc(r.pre_restore_backup)}</code></p>
+             <p class="muted">如需回滚，在备份列表里找到它并再次执行恢复。</p>`
+          : ''}
+        <p class="muted">恢复了 ${(r.restored_files || []).length} 个文件。</p>`);
+      loadBackups();
+      return false;
+    });
+}
+
+/**
+ * 管理员重置他人密码（P0-1）。
+ * 只允许生成临时密码交给本人，不显示任何哈希。
+ */
+function resetUserPassword(userId, loginName) {
+  const suggest = 'Tmp!' + Math.random().toString(36).slice(2, 10) + 'A9';
+  showDialog(`重置密码：${loginName}`, `
+    <div class="msg err" style="margin:0 0 12px">
+      这是<b>账号接管类高危操作</b>，会立即让该用户的全部登录失效。
+    </div>
+    <label style="display:block;font-size:12px;color:#64748b;margin-bottom:4px">
+      新密码（≥10 位，含大小写/数字/符号三类，且不能包含登录名）
+    </label>
+    <input id="rp-pw" style="width:100%;box-sizing:border-box;font-family:ui-monospace,monospace"
+           value="${esc(suggest)}">
+    <div class="muted" style="margin-top:10px;line-height:1.7">
+      · 重置后该用户<b>所有设备需重新登录</b><br>
+      · 系统会<b>强制他下次登录时修改密码</b><br>
+      · 请通过安全渠道把临时密码告知本人
+    </div>`,
+    async () => {
+      const pw = ($('rp-pw').value || '').trim();
+      if (!pw) { msg('请输入新密码', false); return false; }
+      const r = await api(`/api/admin/users/${userId}/reset-password`,
+        { method: 'POST', body: JSON.stringify({ new_password: pw }) });
+      msg(r.message || '已重置');
+      loadUsers();
+      return true;
+    });
+}
+
+
+// 看板交互
+$('a-range').addEventListener('change', () => loadAuditBoard().catch((e) => msg(e.message, false)));
+$('a-bucket').addEventListener('change', () => loadAuditBoard().catch((e) => msg(e.message, false)));
+$('a-refresh').addEventListener('click', () => loadAuditBoard().catch((e) => msg(e.message, false)));
+
+// 矩阵 ↔ 逐角色配置 切换
+$('m-toggle').addEventListener('click', () => {
+  const wrap = document.querySelector('#tab-roles .matrix-wrap');
+  const table = document.querySelector('#tab-roles table:not(.matrix)');
+  const cards = document.querySelectorAll('#tab-roles .card');
+  const showingMatrix = wrap && wrap.offsetParent !== null;
+  if (wrap) wrap.style.display = showingMatrix ? 'none' : '';
+  // 角色列表卡片（第一个 card）在矩阵模式下隐藏
+  if (cards[0]) cards[0].style.display = showingMatrix ? '' : 'none';
+  $('m-toggle').textContent = showingMatrix ? '切换：权限矩阵' : '切换：逐角色配置';
+});
+
+
+// ================================================================ 用户（P2）
+let U_PAGE = 1;
+let U_PAGES = 1;
+
+function userQuery() {
+  const p = new URLSearchParams();
+  const q = $('u-q').value.trim();
+  if (q) p.set('q', q);
+  if ($('u-status').value) p.set('status', $('u-status').value);
+  if ($('u-role').value) p.set('role', $('u-role').value);
+  p.set('page', String(U_PAGE));
+  p.set('size', '20');
+  return p.toString();
+}
+
+async function loadUsers(page) {
+  if (page) U_PAGE = page;
+  const d = await api('/api/admin/users?' + userQuery());
+  U_PAGES = d.pages;
+  $('u-count').textContent = `${d.total}`;
+
+  // 状态与角色下拉（只在首次填充）
+  if ($('u-status').options.length <= 1) {
+    $('u-status').innerHTML = '<option value="">全部状态</option>'
+      + (d.statuses || []).map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  }
+  if ($('u-role').options.length <= 1) {
+    $('u-role').innerHTML = '<option value="">全部角色</option>'
+      + (d.roles || []).map((r) => `<option value="${esc(r.code)}">${esc(r.name)}</option>`).join('');
+  }
+
+  $('u-body').innerHTML = d.users.map((u) => `
+    <tr>
+      <td><b>${esc(u.login_name)}</b>${u.locked ? ' <span class="tag off">已锁定</span>' : ''}</td>
+      <td>${esc(u.display_name)}</td>
+      <td><span class="tag ${u.status === 'active' ? 'ok' : 'off'}">${esc(u.status)}</span></td>
+      <td>${u.roles.map((r) => `<span class="tag role">${esc(r)}</span>`).join('') || '<span class="muted">无</span>'}</td>
+      <td>${u.sessions}</td>
+      <td class="muted">${esc((u.last_login_at || '—').replace('T', ' ').slice(0, 16))}</td>
+      <td>
+        <button class="btn sm ghost" data-u="${esc(u.id)}" data-act="detail">详情</button>
+        <button class="btn sm ghost" data-u="${esc(u.id)}" data-act="roles">改角色</button>
+        <button class="btn sm ghost" data-u="${esc(u.id)}" data-act="status"
+                data-cur="${esc(u.status)}">${u.status === 'active' ? '停用' : '启用'}</button>
+        <button class="btn sm ghost" data-u="${esc(u.id)}" data-act="resetpw">重置密码</button>
+        <button class="btn sm ghost" data-u="${esc(u.id)}" data-act="kick">下线</button>
+      </td>
+    </tr>`).join('') || '<tr><td colspan="7" class="muted">没有匹配的用户</td></tr>';
+
+  $('u-body').querySelectorAll('button[data-act]').forEach((b) => {
+    b.addEventListener('click', () => userAction(b.dataset.u, b.dataset.act, b.dataset.cur));
+  });
+
+  // 分页器
+  const pager = $('u-pager');
+  if (d.pages <= 1) { pager.innerHTML = ''; return; }
+  pager.innerHTML = `
+    <button class="btn sm ghost" ${U_PAGE <= 1 ? 'disabled' : ''} data-p="1">首页</button>
+    <button class="btn sm ghost" ${U_PAGE <= 1 ? 'disabled' : ''} data-p="${U_PAGE - 1}">上一页</button>
+    <span>第 <b>${U_PAGE}</b> / ${d.pages} 页（共 ${d.total} 人）</span>
+    <button class="btn sm ghost" ${U_PAGE >= d.pages ? 'disabled' : ''} data-p="${U_PAGE + 1}">下一页</button>
+    <button class="btn sm ghost" ${U_PAGE >= d.pages ? 'disabled' : ''} data-p="${d.pages}">末页</button>`;
+  pager.querySelectorAll('button[data-p]').forEach((b) => {
+    b.addEventListener('click', () => loadUsers(Number(b.dataset.p)));
+  });
+}
+
+$('u-search').addEventListener('click', () => { U_PAGE = 1; loadUsers(1); });
+$('u-reset').addEventListener('click', () => {
+  $('u-q').value = ''; $('u-status').value = ''; $('u-role').value = '';
+  U_PAGE = 1; loadUsers(1);
+});
+$('u-q').addEventListener('keydown', (e) => { if (e.key === 'Enter') { U_PAGE = 1; loadUsers(1); } });
+
+/** 用户详情抽屉（P2：1.3 + 1.4 —— 详情 + 该用户的操作记录） */
+async function showUserDetail(id) {
+  $('ud-body').innerHTML = '<p class="muted">读取中…</p>';
+  $('u-drawer').showModal();
+  try {
+    const d = await api(`/api/admin/users/${id}`);
+    const u = d.user;
+    $('ud-title').textContent = `${u.display_name}（${u.login_name}）`;
+
+    const perms = (d.permission_details || []).map((p) =>
+      `<span class="pc ${p.high_risk ? 'risk' : ''}" title="${esc(p.description || '')}">${esc(p.name)}</span>`
+    ).join('') || '<span class="muted">无</span>';
+
+    const sessions = (d.sessions || []).map((s) => `
+      <div class="it" style="padding:5px 0;font-size:12.5px">
+        <b>${esc(s.ip || '未知')}</b>
+        <span class="muted">· ${esc((s.last_seen_at || '').replace('T', ' ').slice(0, 16))}</span>
+        <div class="muted" style="font-size:11.5px">${esc((s.user_agent || '').slice(0, 60))}</div>
+      </div>`).join('') || '<p class="muted">无活跃会话</p>';
+
+    const actions = (d.recent_actions || []).map((r) => `
+      <tr>
+        <td class="muted" style="white-space:nowrap">${esc((r.at || '').replace('T', ' ').slice(5, 19))}</td>
+        <td>${esc(r.action || '')}</td>
+        <td><span class="tag ${r.result === 'success' ? 'ok' : (r.result === 'denied' ? 'warn' : 'off')}">${esc(r.result || '')}</span></td>
+      </tr>`).join('') || '<tr><td colspan="3" class="muted">暂无记录</td></tr>';
+
+    $('ud-body').innerHTML = `
+      <h4>账号信息</h4>
+      <div class="kv-mini">
+        <b>状态</b><span><span class="tag ${u.status === 'active' ? 'ok' : 'off'}">${esc(u.status)}</span>
+          ${d.locked ? '<span class="tag off">已锁定</span>' : ''}</span>
+        <b>角色</b><span>${(d.role_names || []).map((r) => `<span class="tag role">${esc(r)}</span>`).join('') || '无'}</span>
+        <b>创建时间</b><span>${esc((u.created_at || '').replace('T', ' ').slice(0, 19))}</span>
+        <b>最近登录</b><span>${esc((u.last_login_at || '—').replace('T', ' ').slice(0, 19))}</span>
+        <b>失败次数</b><span>${d.failed_attempts || 0}</span>
+        <b>动态验证码</b><span>${u.mfa_enabled ? '已启用' : '未启用'}</span>
+      </div>
+
+      <h4>权限（${(d.permissions || []).length} 项）</h4>
+      <div class="perm-chips">${perms}</div>
+
+      <h4>活跃会话（${(d.sessions || []).length}）</h4>
+      ${sessions}
+
+      <h4>近期操作（最近 30 条）</h4>
+      <table><thead><tr><th>时间</th><th>动作</th><th>结果</th></tr></thead>
+      <tbody>${actions}</tbody></table>`;
+  } catch (e) {
+    $('ud-body').innerHTML = `<p class="msg err">${esc(e.message)}</p>`;
+  }
+}
+
+$('ud-close').addEventListener('click', () => $('u-drawer').close());
+
+// ================================================================ 会话（P2）
+let S_AUTO = null;
+
+function setAutoRefresh(on) {
+  if (S_AUTO) { clearInterval(S_AUTO); S_AUTO = null; }
+  const chip = $('s-auto');
+  chip.classList.toggle('on', on);
+  $('s-auto-text').textContent = '自动刷新：' + (on ? '开（10s）' : '关');
+  if (on) {
+    S_AUTO = setInterval(() => {
+      // 只在不处于其它标签页时刷新，避免无谓请求
+      const sec = document.getElementById('tab-sessions');
+      if (sec && sec.classList.contains('on')) {
+        loadSessions().catch(() => {});
+      }
+    }, 10000);
+  }
+}
+
+$('s-auto').addEventListener('click', () => setAutoRefresh(!S_AUTO));
+
+$('s-cleanup').addEventListener('click', async () => {
+  try {
+    const d = await api('/api/admin/sessions/cleanup', { method: 'POST' });
+    msg(`已清理 ${d.removed} 条过期会话记录`);
+    loadSessions();
+  } catch (e) { msg(e.message, false); }
+});
+
+$('s-revoke-all').addEventListener('click', () => {
+  showDialog('全部下线（危险操作）', `
+    <div class="msg err" style="margin:0 0 12px">
+      这会撤销<b>除你自己以外</b>的全部登录会话，所有人需重新登录。
+    </div>
+    <p class="muted">适用于：怀疑账号批量泄漏、需要紧急重置访问权限。</p>`,
+    async () => {
+      const d = await api('/api/admin/sessions/revoke-all',
+        { method: 'POST', body: JSON.stringify({ keep_current: true }) });
+      msg(d.message || '已全部下线');
+      loadSessions();
+      return true;
+    });
+});
+
+// ================================================================ 审计分页（P2）
+let A_OFFSET = 0;
+const A_LIMIT = 100;
+let A_ACCUM = [];
+
+async function loadAudit(more) {
+  if (!more) { A_OFFSET = 0; A_ACCUM = []; }
+  const q = new URLSearchParams();
+  if ($('a-module').value) q.set('module', $('a-module').value);
+  if ($('a-action').value) q.set('action', $('a-action').value);
+  if ($('a-target').value) q.set('target_id', $('a-target').value);
+  if ($('a-result').value) q.set('result', $('a-result').value);
+  q.set('limit', String(A_LIMIT));
+  q.set('offset', String(A_OFFSET));
+
+  const d = await api('/api/admin/audit?' + q.toString());
+  A_ACCUM = A_ACCUM.concat(d.records || []);
+  A_OFFSET += (d.records || []).length;
+
+  $('a-count').textContent = A_ACCUM.length;
+  const st = d.stats;
+  $('a-stats').textContent =
+    `本次显示 ${A_ACCUM.length} 条；累计 ${st.records} 条（${st.files} 个文件）；`
+    + `被拒绝 ${st.denied} 次，错误 ${st.errors} 次`;
+
+  if ($('a-module').options.length <= 1 && d.modules.length) {
+    $('a-module').innerHTML = '<option value="">全部模块</option>'
+      + d.modules.map((m) => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+  }
+
+  // 失败/拒绝高亮（P2：4.4）
+  $('a-body').innerHTML = A_ACCUM.map((r) => {
+    const cls = r.result === 'success' ? 'ok' : (r.result === 'denied' ? 'warn' : 'off');
+    const label = { success: '成功', denied: '被拒绝', error: '错误' }[r.result] || r.result;
+    const rowCls = r.result === 'denied' ? 'row-denied' : (r.result === 'error' ? 'row-error' : '');
+    return `<tr class="${rowCls}">
+      <td class="muted" style="white-space:nowrap">${esc((r.at || '').replace('T', ' ').slice(0, 19))}</td>
+      <td>${esc(r.actor_name || '—')}<br><span class="muted code">${esc((r.actor_id || '').slice(0, 8))}</span></td>
+      <td>${(r.actor_roles || []).map((x) => `<span class="tag role">${esc(x)}</span>`).join('')}</td>
+      <td>${esc(r.module || '')}</td>
+      <td><b>${esc(r.action || '')}</b></td>
+      <td class="code" title="${esc(r.target_id)}">${esc((r.target_id || '').slice(0, 46))}</td>
+      <td><span class="tag ${cls}">${esc(label)}</span></td>
+      <td class="code muted">${esc((r.request_id || '').slice(0, 10))}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="8" class="muted">没有匹配的记录</td></tr>';
+
+  const pager = $('a-pager');
+  pager.innerHTML = d.has_more
+    ? `<button class="btn sm ghost" id="a-more">加载更多（已显示 ${A_ACCUM.length} 条）</button>`
+    : `<span class="muted">已到末尾（共 ${A_ACCUM.length} 条）</span>`;
+  const moreBtn = $('a-more');
+  if (moreBtn) moreBtn.addEventListener('click', () => loadAudit(true).catch((e) => msg(e.message, false)));
+}
+
+
+// ================================================================ 系统健康（P3）
+async function loadDisk() {
+  const d = await api('/api/admin/system/disk');
+  const levelTag = (lv) => ({
+    safe: '<span class="tag ok">可安全清理</span>',
+    caution: '<span class="tag warn">谨慎清理</span>',
+    keep: '<span class="tag off">不可清理</span>',
+  }[lv] || lv);
+  $('disk-body').innerHTML = d.items.map((i) => `
+    <tr>
+      <td><b>${esc(i.name)}</b></td>
+      <td class="code muted">${esc(i.path)}</td>
+      <td>${i.files}</td>
+      <td>${i.mb} MB</td>
+      <td>${levelTag(i.level)}<br><span class="muted" style="font-size:11.5px">${esc(i.note)}</span></td>
+    </tr>`).join('') + `
+    <tr style="font-weight:600"><td>合计</td><td></td><td></td><td>${d.total_mb} MB</td><td></td></tr>`;
+}
+
+$('cl-preview').addEventListener('click', async () => {
+  try {
+    const d = await api('/api/admin/system/cleanup/preview');
+    $('cl-info').innerHTML = `
+      · 7 天前的运行日志：<b>${d.log_files.count}</b> 个（${d.log_files.mb} MB）
+        ${d.log_files.names.length ? '<br><span class="muted code">' + d.log_files.names.map(esc).join('、') + '</span>' : ''}<br>
+      · 过期/已撤销会话记录：<b>${d.sessions.cleanable}</b> 条（当前有效 ${d.sessions.active} 个）<br>
+      · 损坏文件残留：<b>${d.corrupt_files.count}</b> 个
+        ${d.corrupt_files.names.length ? '<br><span class="muted code">' + d.corrupt_files.names.map(esc).join('、') + '</span>' : ''}<br>
+      · 加密备份：<b>${d.backups.count}</b> 份（保留 ${d.backups.keep} 份，超出会自动清理）`;
+    $('cl-actions').hidden = false;
+  } catch (e) { msg(e.message, false); }
+});
+
+$('cl-run').addEventListener('click', () => {
+  const logs = $('cl-logs').checked, sessions = $('cl-sessions').checked,
+        corrupt = $('cl-corrupt').checked;
+  if (!logs && !sessions && !corrupt) { msg('请至少选择一项', false); return; }
+  showDialog('执行清理', `
+    <p>将清理：</p>
+    <ul>
+      ${logs ? '<li>7 天前的运行日志</li>' : ''}
+      ${sessions ? '<li>过期/已撤销的会话记录</li>' : ''}
+      ${corrupt ? '<li>损坏文件残留</li>' : ''}
+    </ul>
+    <p class="muted">批次图片、审计日志、备份文件、安全数据<b>不会被触碰</b>。</p>`,
+    async () => {
+      const d = await api('/api/admin/system/cleanup', { method: 'POST',
+        body: JSON.stringify({ logs: logs, sessions: sessions, corrupt_files: corrupt }) });
+      msg(d.message || '已清理');
+      loadDisk(); loadHealth();
+      return true;
+    });
+});
+
+async function loadLogList() {
+  const d = await api('/api/admin/system/logs');
+  $('lg-file').innerHTML = '<option value="">（选择日志文件）</option>'
+    + d.files.map((f) => `<option value="${esc(f.name)}">${esc(f.name)} · ${f.kb}KB · ${esc(f.mtime)}</option>`).join('');
+}
+
+$('lg-file').addEventListener('change', async () => {
+  const name = $('lg-file').value;
+  if (!name) { $('lg-body').textContent = '选择一个日志文件…'; return; }
+  try {
+    const d = await api('/api/admin/system/logs?name=' + encodeURIComponent(name) + '&lines=300');
+    $('lg-body').textContent = d.lines.join('\n')
+      + `\n\n—— 共 ${d.total_lines} 行，显示最后 ${d.shown} 行 ——`;
+  } catch (e) { $('lg-body').textContent = '读取失败：' + e.message; }
+});
+$('lg-refresh').addEventListener('click', () => { loadLogList(); if ($('lg-file').value) $('lg-file').dispatchEvent(new Event('change')); });
+
+// ================================================================ 角色预览与复制（P3/批3）
+function previewRole(code) {
+  const role = ROLES.find((r) => r.code === code);
+  if (!role) return;
+  const cats = {
+    'batch.create': '▶ 开始 / 重新生成 / 停止',
+    'batch.read': '查看批次与图片',
+    'batch.delete': '删除批次',
+    'batch.export': '导出与打包下载',
+    'effect.generate': '补齐效果图',
+    'effect.read': '查看效果图',
+    'effect.background.manage': '生成 AI 门店背景',
+    'effect.params.manage': '调整效果图参数',
+    'settings.model.manage': '⚙ 保存设置 / 测试连接',
+    'settings.path.manage': '修改输出路径 / 打开目录',
+    'prompt.template.manage': '优化提示词模板',
+    'store.manage': '编辑门店数据',
+    'customer.contact.read': '查看客户完整联系方式',
+    'system.user.manage': '系统管理 → 用户管理',
+    'system.role.manage': '系统管理 → 角色与权限',
+    'system.session.manage': '系统管理 → 会话监控',
+    'system.audit.read': '系统管理 → 审计中心',
+    'system.health.read': '系统管理 → 系统健康',
+    'system.backup.manage': '系统管理 → 备份管理',
+  };
+  const has = (p) => role.permissions.includes(p);
+  const rows = Object.entries(cats).map(([p, label]) => {
+    const on = role.code === 'admin' || has(p);
+    return `<tr><td>${on ? '✅' : '⬜'}</td><td>${esc(label)}</td>
+      <td class="code muted">${esc(p)}</td></tr>`;
+  }).join('');
+  showDialog(`角色预览：${role.name}`, `
+    <p class="muted">这就是该角色登录后**能看到和操作**的功能。'
+      + '（服务端仍会逐接口校验，这里只是可视化）</p>
+    <div style="max-height:50vh;overflow:auto">
+      <table><thead><tr><th style="width:40px"></th><th>界面功能</th><th>权限码</th></tr></thead>
+      <tbody>${rows}</tbody></table>
+    </div>`);
+}
+
+// 角色行加「预览」「复制」按钮
+const _origLoadRoles = loadRoles;
+loadRoles = async function () {
+  await _origLoadRoles();
+  const rows = $('r-body').querySelectorAll('tr');
+  ROLES.forEach((r, i) => {
+    const row = rows[i];
+    if (!row) return;
+    const cell = row.lastElementChild;
+    if (!cell || cell.querySelector('[data-preview]')) return;
+    const pv = document.createElement('button');
+    pv.className = 'btn sm ghost'; pv.textContent = '预览'; pv.dataset.preview = r.code;
+    pv.addEventListener('click', () => previewRole(r.code));
+    cell.insertBefore(pv, cell.firstChild);
+
+    const cp = document.createElement('button');
+    cp.className = 'btn sm ghost'; cp.textContent = '复制';
+    cp.addEventListener('click', async () => {
+      const code = prompt(`复制「${r.name}」为新角色，请输入新编码（小写字母/数字）：`);
+      if (!code) return;
+      try {
+        const d = await api(`/api/admin/roles/${r.code}/copy`, { method: 'POST',
+          body: JSON.stringify({ code: code.trim() }) });
+        msg(`已复制为 ${d.code}（${d.permissions} 项权限）`);
+        loadRoles();
+      } catch (e) { msg(e.message, false); }
+    });
+    cell.insertBefore(cp, cell.firstChild);
+  });
+
+  // 填充「复制自」下拉
+  if ($('nr-copy') && $('nr-copy').options.length <= 1) {
+    $('nr-copy').innerHTML = '<option value="">复制自…</option>'
+      + ROLES.map((r) => `<option value="${esc(r.code)}">${esc(r.name)}</option>`).join('');
+    $('nr-copy').addEventListener('change', async () => {
+      const src = $('nr-copy').value;
+      if (!src) return;
+      const code = prompt('新角色编码（小写字母/数字）：');
+      $('nr-copy').value = '';
+      if (!code) return;
+      try {
+        const d = await api(`/api/admin/roles/${src}/copy`, { method: 'POST',
+          body: JSON.stringify({ code: code.trim() }) });
+        msg(`已从 ${src} 复制为 ${d.code}`);
+        loadRoles();
+      } catch (e) { msg(e.message, false); }
+    });
+  }
+};
+
+// 高危权限二次确认：包一层 editRole 的保存回调
+const _origEditRole = editRole;
+editRole = function (code) {
+  const role = ROLES.find((r) => r.code === code);
+  if (!role) return;
+  _origEditRole(code);
+  // 在保存按钮上再包一层：勾选了新的高危权限就二次确认
+  const footer = $('dlg').querySelector('.df');
+  const okBtn = footer.lastElementChild;
+  if (!okBtn || okBtn.dataset.riskWrapped) return;
+  okBtn.dataset.riskWrapped = '1';
+  const origClick = okBtn.onclick;
+  okBtn.addEventListener('click', (ev) => {
+    const picked = [...$('dlg-body').querySelectorAll('input:checked')].map((i) => i.value);
+    const addedHigh = picked.filter((p) => {
+      const meta = CATALOG.find((c) => c.code === p);
+      return meta && meta.high_risk && !role.permissions.includes(p);
+    });
+    if (!addedHigh.length) return;
+    ev.stopImmediatePropagation();
+    ev.preventDefault();
+    const names = addedHigh.map((p) => (CATALOG.find((c) => c.code === p) || {}).name || p);
+    if (confirm(`即将授予 ${addedHigh.length} 项高危权限：\n\n${names.join('、')}\n\n`
+      + `高危权限涉及密钥、权限授予或不可逆操作。确认继续？`)) {
+      okBtn.dataset.riskWrapped = '';
+      okBtn.click();
+    }
+  }, true);
+};
+
+// ================================================================ 批量与导出（批3）
+$('u-all').addEventListener('change', () => {
+  const on = $('u-all').checked;
+  $('u-body').querySelectorAll('input[type=checkbox][data-pick]')
+    .forEach((cb) => { cb.checked = on; });
+});
+
+$('u-batch-go').addEventListener('click', async () => {
+  const action = $('u-batch-act').value;
+  if (!action) { msg('请选择批量操作', false); return; }
+  const ids = [...$('u-body').querySelectorAll('input[type=checkbox][data-pick]:checked')]
+    .map((cb) => cb.dataset.pick);
+  if (!ids.length) { msg('请先勾选用户', false); return; }
+  const label = { disable: '停用', enable: '启用', unlock: '解除锁定' }[action];
+  if (!confirm(`确认对 ${ids.length} 个用户执行「${label}」？`)) return;
+  try {
+    const d = await api('/api/admin/users/batch', { method: 'POST',
+      body: JSON.stringify({ action: action, user_ids: ids }) });
+    msg(d.message || '已执行');
+    loadUsers();
+  } catch (e) { msg(e.message, false); }
+});
+
+$('u-export').addEventListener('click', () => { location.href = '/api/admin/users/export'; });
+
+// ================================================================ 请求追踪（批3）
+document.addEventListener('click', async (e) => {
+  const el = e.target && e.target.closest ? e.target.closest('#a-body .code.muted') : null;
+  if (!el) return;
+  const rid = (el.textContent || '').trim();
+  if (!rid || rid.length < 4) return;
+  try {
+    const d = await api('/api/admin/audit/trace?request_id=' + encodeURIComponent(rid));
+    const rows = (d.records || []).map((r) => `
+      <tr><td class="muted">${esc((r.at || '').replace('T', ' ').slice(11, 19))}</td>
+        <td>${esc(r.module || '')}</td><td><b>${esc(r.action || '')}</b></td>
+        <td><span class="tag ${r.result === 'success' ? 'ok' : (r.result === 'denied' ? 'warn' : 'off')}">${esc(r.result || '')}</span></td>
+        <td class="code">${esc((r.target_id || '').slice(0, 40))}</td></tr>`).join('');
+    showDialog(`请求追踪：${rid}`, `
+      <p class="muted">同一请求 ID 下的全部审计记录（${d.count} 条）。</p>
+      <table><thead><tr><th>时间</th><th>模块</th><th>动作</th><th>结果</th><th>目标</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="5" class="muted">无记录</td></tr>'}</tbody></table>`);
+  } catch (err) { msg(err.message, false); }
+});
+
+// ---------------------------------------------------------------- 启动
+(async () => {
+  try {
+    ME = await api('/api/auth/me');
+  } catch (_) { location.href = '/'; return; }
+
+  $('who').textContent = `${ME.user.display_name}（${ME.user.roles.join('、')}）`;
+
+  // 权限不足的标签页直接隐藏（§6：不显示无权限入口）
+  const tabPerm = { users: 'system.user.manage', roles: 'system.role.manage',
+                    sessions: 'system.session.manage', audit: 'system.audit.read',
+                    health: 'system.health.read', backup: 'system.backup.manage' };
+  let first = null;
+  Object.entries(tabPerm).forEach(([tab, perm]) => {
+    const btn = document.querySelector(`.tabs button[data-tab="${tab}"]`);
+    if (btn && !can(perm)) btn.hidden = true;
+    else if (btn && !first) first = tab;
+  });
+
+  if (!first) {
+    document.querySelector('main').innerHTML =
+      '<div class="card"><h3>没有可用的管理功能</h3>'
+      + '<p class="muted">你的账号没有任何管理权限。请联系管理员分配相应角色。</p></div>';
+    return;
+  }
+  // ---------------------------------------------------------------- 锚点直达
+  //
+  // 顶栏「系统管理」菜单用的是 /admin#users、/admin#roles 这种锚点。
+  // 两个坑（实测踩到）：
+  //   ① 只读一次 location.hash 不够 —— 在**同一个标签页内**从 #users 切到 #roles
+  //      不会重新加载页面，启动逻辑根本不会再跑。必须监听 hashchange。
+  //   ② querySelector 可能返回 null（比如锚点拼错），直接取 .hidden 会抛异常，
+  //      而外层 catch 会把它当成「初始化失败」，整个页面停摆。必须判空。
+  function tabFromHash() {
+    const want = (location.hash || '').replace(/^#/, '').trim();
+    if (!want) return null;
+    const btn = document.querySelector(`.tabs button[data-tab="${want}"]`);
+    return (btn && !btn.hidden) ? want : null;
+  }
+
+  function activateTab(tab) {
+    const btn = document.querySelector(`.tabs button[data-tab="${tab}"]`);
+    if (!btn || btn.hidden) return false;
+    btn.click();
+    return true;
+  }
+
+  // 首次定位：锚点优先，否则第一个有权限的板块
+  activateTab(tabFromHash() || first);
+
+  // 标签页点击 → 同步 hash（便于分享与刷新保持）
+  document.querySelectorAll('.tabs button').forEach((b) => {
+    b.addEventListener('click', () => {
+      const want = '#' + b.dataset.tab;
+      if (location.hash !== want) {
+        try { history.replaceState(null, '', want); } catch (_) {}
+      }
+    });
+  });
+
+  // 顶栏菜单在同一标签页内切换板块 → 靠这个事件生效
+  window.addEventListener('hashchange', () => {
+    const t = tabFromHash();
+    if (t) activateTab(t);
+  });
+})().catch((e) => msg('初始化失败：' + e.message, false));
+})();
+</script>
+</body>
+</html>

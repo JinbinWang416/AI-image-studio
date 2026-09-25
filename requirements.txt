@@ -1,0 +1,64 @@
+# AI图片生成 —— 运行依赖
+#
+# 安装：
+#     .\.venv\Scripts\python.exe -m pip install -r requirements.txt
+#
+# 版本策略（依据 `平台安全开发提示词.docx` §12「生产代码来自版本库中经过验证的确定版本」）：
+#     · 直接依赖一律用 `==` 固定到**当前已验证可用**的版本
+#     · 升级前先跑 `tools/check_security_deps.py` 与 `python -m unittest discover -s tests`
+#     · 完整依赖树见 requirements.lock.txt
+#
+# 说明：核心（mock 服务商 + CLI）只用标准库即可运行；下列依赖用于真实 API 与网页版。
+
+# --- 网页框架 ---
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+
+# --- 服务商 API 调用 ---
+httpx==0.28.1
+
+# --- 图片处理（刷白、效果图合成、设计图生成）---
+Pillow==12.3.0
+
+# --- 安全：密码哈希与多因素认证（2026-09-20 安全改造新增）---
+# argon2-cffi：argon2id，2015 年密码哈希竞赛冠军（文档 §3.7 要求成熟方案）
+argon2-cffi==25.1.0
+# pyotp：TOTP（RFC 6238），兼容 Google Authenticator 等（文档 §3.9 管理员 MFA）
+PyOTP==2.10.0
+# cryptography：AES-256-GCM 加密备份（文档 §2.3 禁止自研密码学算法）
+cryptography==50.0.1
+
+# --- 印刷 TIF 导出（app/print_export/）---
+# numpy：去背色距计算、偏色保护掩膜（int32 运算，见 cmyk.py 注释）
+numpy==2.5.3
+# opencv-python-headless：刀模轮廓提取（findContours / approxPolyDP / dilate）
+# 用 headless 版：不需要 GUI，体积更小，适合服务器
+opencv-python-headless==5.0.0.93
+
+# rembg[cpu]：AI 去背（u2net），已启用
+#   · 安装：pip install "rembg[cpu]"   （含 onnxruntime，约 50 MB）
+#   · 首次运行自动下载 u2net.onnx（约 167 MB）到 %USERPROFILE%\.rembg\models\
+#   · ⚠️ 缺 onnxruntime 时 rembg 会 print 提示后 `sys.exit()` ——
+#     SystemExit 继承 BaseException，代码里已专门捕获（见 layers.CutoutSession）
+#   · 不装也能跑：layers.py 自动降级为「纯色去背」（对纯净背景的 AI 图足够，
+#     实测最终白墨层同为硬边，且快约 6 倍：0.42s vs 2.53s）
+rembg==2.0.84
+onnxruntime==1.30.0
+
+# --- 可选：OCR 质检（阶段 6）---
+# 生成后回读图上中文，与期望文本比对，不合格自动重生成
+# rapidocr-onnxruntime==1.3.24
+
+# ---------------------------------------------------------------------------
+# 离线安装（无外网环境）
+# ---------------------------------------------------------------------------
+# 1. 在联网机器上把依赖下载为 wheel：
+#       pip download -r requirements.txt -d .\wheels ^
+#           --only-binary=:all: --platform win_amd64 --python-version 312
+# 2. 拷贝 wheels 目录到离线机器，然后：
+#       .\.venv\Scripts\python.exe -m pip install ^
+#           --no-index --find-links=.\wheels -r requirements.txt
+#
+# 注意：Pillow 12.x 已内置 ImageCms（lcms2 绑定），
+#       **不需要**额外安装 pillow-lcms2 或 python-lcms2。
+# ---------------------------------------------------------------------------

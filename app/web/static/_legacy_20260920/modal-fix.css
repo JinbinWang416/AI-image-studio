@@ -1,0 +1,97 @@
+/* ============================================================================
+   弹窗层级与定位修复（2026-09-20）
+   ----------------------------------------------------------------------------
+   【现象】设置弹窗顶部约 40px 被切平：标题「⚙ 设置」与「保存设置」只显示
+           下半部分，顶部圆角也不见了。
+
+   【排查过程】（逐条排除）
+     1. 计算样式全部正常：modal 0~780、box 23~725、head 23~93
+     2. `elementFromPoint(head 中心)` 命中的就是 `modal-head` —— 没被遮挡
+     3. 无 transform / clip-path / mask；body 与 html 的 transform 均为 none
+     4. 移除 `backdrop-filter` → 仍然被切（排除渲染层模糊）
+     5. **颜色标记法**：给 `.modal-box` 加 4px 绿色边框 →
+        **左、右、下三条边都在，唯独上边不可见**
+        → 结论：顶部不是"被裁掉"，而是**被别的东西盖住了**
+
+   【根因】z-index 层级冲突：
+
+        .topbar { z-index: 1300; }   ← 上一轮修「系统管理菜单被遮罩盖住」时设的
+        .modal  { z-index: 150;  }   ← style.css 原值
+
+      `.topbar` 是 `position: sticky; top: 0`，高度约 40px，**压在弹窗之上**，
+     正好切掉弹窗顶部一条 —— 这就是标题与按钮"只剩下半截"的原因。
+
+     这是上一轮修复埋下的坑：抬高 topbar 时**没有检查它是否压住了别的浮层**。
+
+   【修复】把弹窗层级提到顶栏之上，并统一记录层级带（见下）。
+
+   【层级约定】—— 以后新增浮层请对号入座，避免再撞
+        .topbar / 菜单下拉        1300
+        .menu-backdrop            1100
+        .modal                    2000   ← 弹窗必须在顶栏之上
+        .lightbox                 2100   ← 大图查看在弹窗之上
+        .toast                    3000   ← 提示永远最上层
+   ============================================================================ */
+
+.modal {
+  z-index: 2000;               /* 关键修复：必须高于 .topbar 的 1300 */
+  display: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 3vh 22px 22px;
+
+  /* 顺带移除全屏模糊：既省性能，也避免额外的渲染层 */
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  background: rgba(15, 23, 42, .58);
+}
+
+.modal.show {
+  display: block;              /* 大弹窗用「顶部对齐 + 容器滚动」，比垂直居中更稳 */
+}
+
+/* 弹窗：水平居中，垂直从顶部开始 */
+.modal > .modal-box {
+  margin: 0 auto;
+  flex: none;
+}
+
+/* ---------------- 层级带 ---------------- */
+.lightbox { z-index: 2100; }   /* 大图查看盖在弹窗之上 */
+.toast { z-index: 3000; }      /* 提示永远最上层 */
+
+/* ---------------- 内部伸缩约束 ---------------- */
+.modal-box > .modal-head,
+.modal-box > .modal-foot {
+  flex: 0 0 auto;
+}
+
+/* 头部：给标题留足空间 */
+.modal-box:has(.settings-shell) > .modal-head {
+  padding: 16px 22px;
+  min-height: 64px;
+}
+.modal-box:has(.settings-shell) > .modal-head h2 {
+  line-height: 1.35;
+}
+.modal-box:has(.settings-shell) > .modal-head .modal-head-actions {
+  flex: 0 0 auto;
+}
+
+/* ---------------- 矮视口适配 ---------------- */
+/* 笔记本 1366×640 这类视口：压低弹窗高度，确保完整可见 */
+@media (max-height: 720px) {
+  .modal-box.md,
+  .modal-box.lg,
+  .modal-box:has(.settings-shell) {
+    height: min(640px, 88vh);
+  }
+}
+@media (max-height: 620px) {
+  .modal-box.md,
+  .modal-box.lg,
+  .modal-box:has(.settings-shell) {
+    height: 92vh;
+  }
+  .modal { padding: 10px; }
+}
