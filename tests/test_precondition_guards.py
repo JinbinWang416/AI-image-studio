@@ -62,15 +62,45 @@ class CorruptConfigTests(unittest.TestCase):
         self.assertEqual(store.load().get("active_provider"), "qwen")
         self.assertFalse(list(self.dir.glob("*.corrupt.*")), "没坏却留了档")
 
-    def test_save_over_corrupt_is_allowed_but_recorded(self) -> None:
-        """覆盖损坏配置**不阻塞**（否则配置一坏就再也改不动），但要有痕迹。"""
-        self.path.write_bytes(b"NOT JSON AT ALL")
+    def test_save_over_corrupt_is_rejected_and_file_untouched(self) -> None:
+        """损坏配置下普通 `save()` 必须被**拒绝**，且原文件字节不变。
+
+        ⚠️ 这条断言原本写的是「允许覆盖、但记录审计」—— 评审指出那不对：
+           留档只降低恢复成本，阻止不了「一次读取故障 → 用户的 provider /
+           密钥引用 / 输出路径被永久抹掉」。正确行为是拒绝 + 给恢复路径。
+        """
+        from app.settings import ConfigCorruptError
+
+        original = b"NOT JSON AT ALL"
+        self.path.write_bytes(original)
         store = SettingsStore(self.path)
         with self.assertLogs("app.settings", level="WARNING"):
             store.load()
-        store.save({"active_provider": "qwen"})
-        written = json.loads(self.path.read_text(encoding="utf-8"))
-        self.assertEqual(written.get("active_provider"), "qwen")
+
+        with self.assertRaises(ConfigCorruptError) as ctx:
+            store.save({"active_provider": "qwen"})
+
+        self.assertEqual(self.path.read_bytes(), original,
+                         "损坏的配置被默认值覆盖了 —— 用户设置会永久丢失")
+        self.assertTrue(ctx.exception.backup, "异常里应带上留档路径供人工恢复")
+        self.assertTrue(list(self.dir.glob("settings.json.corrupt.*")))
+
+    def test_reset_also_refuses_unless_confirmed(self) -> None:
+        """普通 `reset()` 同样要拒绝 —— 它也会拿默认值顶掉用户配置。"""
+        from app.settings import ConfigCorruptError
+
+        self.path.write_bytes(b"BROKEN")
+        store = SettingsStore(self.path)
+        with self.assertLogs("app.settings", level="WARNING"):
+            store.load()
+
+        with self.assertRaises(ConfigCorruptError):
+            store.reset()
+
+        # 显式确认后才允许重置
+        fresh = store.reset(allow_corrupt=True)
+        self.assertIsInstance(fresh, dict)
+        self.assertIn("providers", fresh)
 
 
 class ProviderPrecheckTests(unittest.TestCase):
@@ -345,6 +375,55 @@ class BatchSnapshotFreezeTests(unittest.TestCase):
         self.assertEqual(out.provider, "qwen", "续跑没有回到批次冻结的服务商")
         self.assertEqual(out.model, "qwen-image-3.0", "续跑没有回到批次冻结的模型")
 
+    def test_cross_provider_resume_uses_snapshot_credentials(self) -> None:
+        """**切到别的服务商之后续跑旧批次，必须用快照那个服务商的密钥与地址。**
+
+        这是评审 F-01 的核心：只恢复 `provider` / `model` 两个字符串是不够的 ——
+        `api_key` / `base_url` 若仍来自当前设置，就会拿 OpenAI 的密钥
+        去请求千问的地址（或者反过来），产物来源也不可核验。
+
+        ⚠️ 用的是**假凭据**，且 `get_store()` 在测试进程里已被隔离到临时目录。
+        """
+        from app.settings import get_store
+        from app.web.server import _apply_snapshot_and_assets
+
+        get_store().save({"providers": {
+            "qwen": {"api_key": "FAKE-QWEN-KEY", "base_url": "https://qwen.example/v1"},
+            "openai": {"api_key": "FAKE-OPENAI-KEY", "base_url": "https://openai.example/v1"},
+        }})
+
+        # 当前设置：OpenAI
+        cfg = self._cfg(
+            provider="openai", model="gpt-x",
+            api_key="FAKE-OPENAI-KEY", base_url="https://openai.example/v1",
+        )
+        # 快照：千问
+        snap = {
+            "active_provider": "qwen",
+            "model": "qwen-image-3.0",
+            "image_workflow": {"mode": "text"},
+        }
+        out = _apply_snapshot_and_assets(cfg, snap)
+
+        self.assertEqual(out.provider, "qwen")
+        self.assertEqual(out.model, "qwen-image-3.0", "模型没回到快照值")
+        self.assertEqual(out.api_key, "FAKE-QWEN-KEY",
+                         "续跑用了**当前服务商**的密钥 —— 会发到错误的地址")
+        self.assertEqual(out.base_url, "https://qwen.example/v1",
+                         "续跑用了**当前服务商**的地址")
+
+    def test_same_provider_resume_keeps_model_frozen(self) -> None:
+        """服务商没变、只有模型被换过时，模型仍要以快照为准。"""
+        from app.web.server import _apply_snapshot_and_assets
+
+        cfg = self._cfg(provider="qwen", model="qwen-image-2.0")
+        out = _apply_snapshot_and_assets(
+            cfg,
+            {"active_provider": "qwen", "model": "qwen-image-3.0",
+             "image_workflow": {"mode": "text"}},
+        )
+        self.assertEqual(out.model, "qwen-image-3.0", "同服务商下模型没冻结")
+
     def test_legacy_snapshot_without_provider_falls_back(self) -> None:
         """本次修复之前创建的老批次没有这两个键 —— 必须退回当前设置而非报错。"""
         from app.web.server import _apply_snapshot_and_assets
@@ -402,7 +481,11 @@ class SecretScannerTests(unittest.TestCase):
         script = Path(__file__).resolve().parent.parent / "tools" / "check_git_secrets.py"
         r = subprocess.run(
             [sys.executable, str(script), "--selftest"],
-            capture_output=True, text=True, encoding="utf-8",
+            capture_output=True, text=True,
+            # ⚠️ 必须容错：默认 Windows 控制台下子进程输出的是 GBK 字节，
+            #    强行按 utf-8 解码会抛 UnicodeDecodeError，让这条测试**假失败**。
+            #    （评审就是在默认 GBK 终端下发现扫描器自检退出码为 1 的。）
+            encoding="utf-8", errors="replace",
         )
         self.assertEqual(r.returncode, 0, f"自检未通过：\n{r.stdout}\n{r.stderr}")
 

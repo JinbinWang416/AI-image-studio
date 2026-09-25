@@ -137,6 +137,36 @@ def _append_audit(record: dict) -> None:
 
 
 # ---------------------------------------------------------------- 存储
+class ConfigCorruptError(RuntimeError):
+    """配置文件读不懂，**拒绝**用默认值覆盖它。
+
+    ⚠️ 为什么必须拒绝，而不是「留档之后照写」：
+
+       `load()` 解析失败时 `_data` 是**默认值**（其中 `active_provider="mock"`）。
+       如果放行 `save()`，一次读取故障就会把用户的 provider、密钥引用、
+       输出路径等设置**从活动配置里永久抹掉** —— 留档只是降低了人工恢复成本，
+       并没有阻止业务中断；万一留档那一步也失败，原始字节就彻底没了。
+
+       正确做法：拒绝写入 + 明确告诉调用方原文件在哪、怎么恢复。
+
+    Attributes:
+        path: 出问题的配置文件
+        backup: 已留档的副本路径（留档失败时为 None）
+        reason: 解析失败的具体原因
+    """
+
+    def __init__(self, path: Any, backup: Any = None, reason: str = "") -> None:
+        self.path = path
+        self.backup = backup
+        self.reason = reason
+        msg = f"配置文件损坏，已拒绝覆盖：{path}\n  原因：{reason or '解析失败'}"
+        if backup:
+            msg += f"\n  原文件已留档：{backup}"
+        else:
+            msg += "\n  ⚠️ 留档也失败了，请先手工备份该文件再重置"
+        super().__init__(msg)
+
+
 class SettingsStore:
     """设置读写。线程内单例式使用即可。"""
 
@@ -193,12 +223,13 @@ class SettingsStore:
             stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             keep = self.path.with_name(f"{self.path.name}.corrupt.{stamp}")
             shutil.copy2(self.path, keep)
+            self._corrupt_backup = keep
             log.warning(
-                "配置损坏，已留档 %s（原因：%s）—— 后续 save() 将覆盖当前配置",
+                "配置损坏，已留档 %s（原因：%s）",
                 keep.name, getattr(self, "_corrupt_reason", ""),
             )
         except OSError:
-            pass
+            self._corrupt_backup = None
 
     def masked(self) -> dict:
         """给前端的版本：API Key 全部打码。"""
@@ -267,21 +298,22 @@ class SettingsStore:
         current = self.load()
 
         if getattr(self, "corrupt", False):
-            # ⚠️ 走到这里说明：load() 没能读懂原文件，`current` 其实是**默认值**，
-            #    写回就等于用默认值覆盖用户配置（active_provider 会退回 "mock"）。
-            #
-            #    这里不阻塞用户 —— 否则配置一坏就再也改不动了，只能手工删文件。
-            #    但必须留痕：原文件已在 load() 里留档为
-            #    `settings.json.corrupt.<时间戳>`，这里再写一条审计。
+            # ⚠️ **拒绝**用默认值覆盖读不懂的配置 —— 详见 ConfigCorruptError 的说明。
+            #    留档只是降低恢复成本；真正要防的是「一次读取故障 →
+            #    用户的 provider / 密钥引用 / 输出路径被永久抹掉」。
             caller, _ = _scan_stack() if self.is_real_config() else ("", "")
             _append_audit({
                 "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                "action": "OVERWRITE_CORRUPT",
+                "action": "SAVE_REJECTED_CORRUPT",
                 "caller": caller,
                 "reason": getattr(self, "_corrupt_reason", ""),
                 "keys": sorted(patch.keys()),
             })
-            log.warning("用默认值覆盖了读不懂的配置：%s", self.path)
+            raise ConfigCorruptError(
+                self.path,
+                getattr(self, "_corrupt_backup", None),
+                getattr(self, "_corrupt_reason", ""),
+            )
 
         patch = self._clear_batch_on_output_root_change(patch, current)
         patch = self._merge_secrets(patch, current)
@@ -379,9 +411,31 @@ class SettingsStore:
     def active_provider(self) -> str:
         return self.load().get("active_provider", "mock")
 
-    def reset(self) -> dict:
-        """恢复默认设置（保留已填的 API Key）。"""
+    def reset(self, *, allow_corrupt: bool = False) -> dict:
+        """恢复默认设置（保留已填的 API Key 与 Base URL）。
+
+        ⚠️ 配置损坏时**默认也会拒绝** —— 因为 `load()` 拿到的是默认值，
+           「重置」会把用户原有设置彻底抹掉。要真的重置损坏配置，
+           必须显式传 `allow_corrupt=True`（Web 层有对应的确认接口），
+           而且**留档成功是前提**：留档都失败了就不许动原文件。
+
+        Raises:
+            ConfigCorruptError: 配置损坏且未显式允许重置
+        """
         current = self.load()
+        if getattr(self, "corrupt", False):
+            backup = getattr(self, "_corrupt_backup", None)
+            if not allow_corrupt:
+                raise ConfigCorruptError(
+                    self.path, backup, getattr(self, "_corrupt_reason", "")
+                )
+            if backup is None:
+                # 留档失败 → 不能拿默认值顶掉原始字节，先让用户手工备份
+                raise ConfigCorruptError(
+                    self.path, None,
+                    f"留档失败，拒绝重置以免丢失原始内容（{getattr(self, '_corrupt_reason', '')}）",
+                )
+
         fresh = default_settings()
         for name, p in current.get("providers", {}).items():
             if p.get("api_key") and name in fresh["providers"]:
@@ -390,6 +444,9 @@ class SettingsStore:
                 fresh["providers"][name]["base_url"] = p["base_url"]
         if current.get("prompt_optimizer", {}).get("api_key"):
             fresh["prompt_optimizer"]["api_key"] = current["prompt_optimizer"]["api_key"]
+
+        # 已经确认过要重置，解除标记后再走 save()
+        self.corrupt = False
         self._data = fresh
         self.save({})
         return fresh
