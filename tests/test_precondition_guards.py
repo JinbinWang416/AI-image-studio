@@ -20,6 +20,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from app.batches import is_safe_batch_id
 from app.providers import ProviderError, available_providers, get_provider
@@ -161,6 +162,126 @@ class BatchIdTraversalTests(unittest.TestCase):
             "output_root / '..' 指向了别处 —— 这就是路径穿越",
         )
         self.assertFalse(is_safe_batch_id(".."), "所以 '..' 必须被拒绝")
+
+
+class SettingsFieldPermissionTests(unittest.TestCase):
+    """P1-01：`POST /api/settings` 必须按**字段**授权，不能整个接口一刀切。
+
+    这个接口会把 payload 深度合并进 settings.json，可改字段横跨
+    「模型 / 路径 / 提示词 / 效果图」四组权限。只挂一个权限码的后果是：
+      · 挂 `settings.model.manage` → 有「改模板」权限的设计师连提示词都改不了，
+        同时有该权限的人可以顺手改掉输出路径，`settings.path.manage` 形同虚设。
+    """
+
+    def _stub_user(self):
+        class U:
+            id = "u-test"
+            login_name = "tester"
+            display_name = "测试用户"
+            roles = ["designer"]
+        return U()
+
+    def _run(self, payload: dict, granted: set[str]):
+        """在给定的权限集合下调用校验函数，返回抛出的 HTTPException 或 None。"""
+        from fastapi import HTTPException
+
+        from app.web import server as srv
+
+        user = self._stub_user()
+        with mock.patch.object(
+            srv.security_service, "has_permission",
+            side_effect=lambda u, code: code in granted,
+        ), mock.patch.object(srv.security_service, "audit") as audit:
+            audit.log = mock.Mock()
+            try:
+                srv._require_settings_permissions(user, payload)
+                return None
+            except HTTPException as exc:
+                return exc
+
+    def test_provider_fields_need_model_permission(self) -> None:
+        exc = self._run({"providers": {"qwen": {"api_key": "x"}}}, set())
+        self.assertIsNotNone(exc, "改 API Key 却没有任何权限，应当被拒")
+        self.assertEqual(exc.status_code, 403)
+
+    def test_output_field_needs_path_permission(self) -> None:
+        """有模型权限、没有路径权限时，改输出路径必须被拒。"""
+        exc = self._run({"output": {"root": "D:/elsewhere"}}, {"settings.model.manage"})
+        self.assertIsNotNone(exc, "只有模型权限也能改输出路径 —— 路径权限形同虚设")
+        self.assertIn("settings.path.manage", str(exc.detail))
+
+    def test_prompt_template_field_needs_template_permission(self) -> None:
+        """设计师能改提示词模板，但没有模型/路径权限。"""
+        ok = self._run({"prompt_quality": {"template": "x"}}, {"prompt.template.manage"})
+        self.assertIsNone(ok, "有模板权限却改不了提示词模板")
+
+    def test_mixed_payload_requires_all_relevant_permissions(self) -> None:
+        """一次提交跨越多组字段时，任何一组缺权限都要整体拒绝。"""
+        payload = {"providers": {"qwen": {}}, "output": {"root": "D:/x"}}
+        exc = self._run(payload, {"settings.model.manage"})       # 缺 path
+        self.assertIsNotNone(exc, "同时改密钥和输出路径时只校验了其中一组")
+
+    def test_unknown_field_falls_back_to_strictest(self) -> None:
+        """未在映射表里的字段（含以后新增的）落到最严档，默认不放行。"""
+        exc = self._run({"some_future_setting": 1}, {"prompt.template.manage"})
+        self.assertIsNotNone(exc, "新字段被默认放行了，应该落到最严权限")
+        self.assertIn("settings.model.manage", str(exc.detail))
+
+    def test_version_key_is_ignored(self) -> None:
+        """`version` 只是回传的元信息，不该要求任何权限。"""
+        self.assertIsNone(self._run({"version": 1}, set()))
+
+    def test_effect_fields_need_effect_permission(self) -> None:
+        for key in ("effect", "effect_workflow"):
+            ok = self._run({key: {}}, {"effect.params.manage"})
+            self.assertIsNone(ok, f"{key} 应该能用效果图参数权限改")
+            exc = self._run({key: {}}, set())
+            self.assertIsNotNone(exc, f"{key} 在无权限时应当被拒")
+
+
+class AccessRulePathTests(unittest.TestCase):
+    """P1-01 的另一半：路径权限规则不能靠前缀误伤。
+
+    `pick-dir` / `new-dir` 原先不在规则表里，于是命中 `POST /api/settings`
+    的前缀规则，被误判成「管理模型与 API Key」——而这些接口实际是在
+    选择/创建**输出目录**。
+    """
+
+    def test_pick_and_new_dir_map_to_path_permission(self) -> None:
+        from app.web.access_rules import required_permission_for
+
+        for path in ("/api/settings/pick-dir", "/api/settings/new-dir",
+                     "/api/settings/validate-path", "/api/settings/open-dir"):
+            allowed, perm = required_permission_for("POST", path)
+            self.assertTrue(allowed, f"{path} 不该被完全拒绝")
+            self.assertEqual(
+                perm, "settings.path.manage",
+                f"{path} 的权限码应是 settings.path.manage，实际是 {perm}",
+            )
+
+    def test_reset_and_test_still_need_model_permission(self) -> None:
+        from app.web.access_rules import required_permission_for
+
+        for path in ("/api/settings/reset", "/api/settings/test",
+                     "/api/settings/test-image"):
+            allowed, perm = required_permission_for("POST", path)
+            self.assertTrue(allowed)
+            self.assertEqual(perm, "settings.model.manage", f"{path} 权限码被改动了")
+
+    def test_save_settings_defers_to_field_level_check(self) -> None:
+        """`POST /api/settings` 本体不再挂权限码，改为函数内按字段校验。"""
+        from app.web.access_rules import required_permission_for
+
+        allowed, perm = required_permission_for("POST", "/api/settings")
+        self.assertTrue(allowed, "登录用户应当能到达该端点（细节由字段级校验决定）")
+        self.assertIsNone(perm, "该端点不应再挂一刀切的权限码")
+
+    def test_reading_settings_needs_only_login(self) -> None:
+        from app.web.access_rules import required_permission_for
+
+        allowed, perm = required_permission_for("GET", "/api/settings")
+        self.assertTrue(allowed)
+        self.assertIsNone(perm)
 
 
 if __name__ == "__main__":

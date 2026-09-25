@@ -100,7 +100,19 @@ PATH_PERMISSION_RULES: tuple[tuple[str, str, str | None], ...] = (
     ("POST", "/api/settings/test", "settings.model.manage"),
     ("POST", "/api/settings/validate-path", "settings.path.manage"),
     ("POST", "/api/settings/open-dir", "settings.path.manage"),
-    ("POST", "/api/settings", "settings.model.manage"),
+    # ⚠️ pick-dir / new-dir 会**选择或创建输出目录**，属于路径变更。
+    #    它们原先不在表里，于是命中下面 `POST /api/settings` 的前缀规则，
+    #    被误判成「管理模型与 API Key」—— 权限码用错了。
+    ("POST", "/api/settings/pick-dir", "settings.path.manage"),
+    ("POST", "/api/settings/new-dir", "settings.path.manage"),
+    # ⚠️ `POST /api/settings` 这里**故意不挂权限码**：
+    #    它会把整个 payload 深度合并进 settings.json，可改字段横跨
+    #    「模型 / 路径 / 提示词 / 效果图」四组权限 —— 一刀切必然不是过严就是过松
+    #    （挂 settings.model.manage 会让有「改模板」权限的设计师连提示词都改不了，
+    #     同时让有该权限的人顺手改掉输出路径，使 settings.path.manage 形同虚设）。
+    #    改为在 `api_save_settings()` 内按**字段**逐组校验，见
+    #    server.py 的 `_SETTINGS_FIELD_PERMISSION`。
+    ("POST", "/api/settings", None),
 
     # ── 导出 ──
     ("*", "/api/export/", "batch.export"),
