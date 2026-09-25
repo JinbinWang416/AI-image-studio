@@ -28,10 +28,24 @@ from app.security.service import SecurityService  # noqa: E402
 
 
 def main() -> int:
-    if len(sys.argv) < 2:
+    # ⚠️ 必须显式挡掉 `-h` / `--help` / `/?` 这类参数：
+    #    本脚本只检查「有没有第 2 个参数」，于是 `--help` 会被**当成新密码**写进去，
+    #    把管理员密码改成字面量 `--help`（实测踩到，撤掉了旧会话且绕过了强度校验）。
+    #    任何「参数即密码」的 CLI 都有这个陷阱。
+    args = sys.argv[1:]
+    if not args or args[0].strip() in ("-h", "--help", "/?", "help", "-?", "/help"):
         print("  用法: python tools/set_admin_password.py <新密码>")
+        print()
+        print("  ⚠️ 注意：参数会进入 shell 历史。更稳妥的是交互输入：")
+        print('       $s = Read-Host -AsSecureString "新密码"')
+        print('       $p = [System.Net.NetworkCredential]::new("", $s).Password')
+        print('       .\\.venv\\Scripts\\python.exe tools\\set_admin_password.py $p')
+        print('       Remove-Variable s, p')
         return 2
-    new_pw = sys.argv[1]
+    new_pw = args[0]
+    if new_pw.startswith("-"):
+        print(f"  [拒绝] 密码不能以 '-' 开头（{new_pw!r} 看起来是命令行选项，不是密码）")
+        return 2
 
     svc = SecurityService()
 
