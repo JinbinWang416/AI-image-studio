@@ -13,6 +13,11 @@
 from __future__ import annotations
 
 import json
+import os
+import sys
+import tempfile
+import traceback
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,6 +27,19 @@ from .providers.catalog import default_settings
 ROOT = PACKAGE_ROOT
 CONFIG_DIR = STATE_ROOT / "config"
 SETTINGS_FILE = CONFIG_DIR / "settings.json"
+AUDIT_LOG = STATE_ROOT / "logs" / "settings-writes.log"
+
+# ⚠️ 真实配置路径的**固化副本**，专供守卫与审计判定使用。
+#
+#    不要图省事直接用 `SETTINGS_FILE` 做判定 —— 它是个模块全局，
+#    `unittest.mock.patch.object(mod, "SETTINGS_FILE", tmp)` 一句话就能把它换掉。
+#    一旦被换掉，一个指向**真实配置**的 store 就会「看起来不像真实配置」：
+#    守卫提前 return、审计静默跳过，写入畅通无阻。实测就是这么丢的
+#    `active_provider=qwen`（文件 mtime 对得上，审计日志里却一条记录都没有）。
+_REAL_SETTINGS_PATH = (STATE_ROOT / "config" / "settings.json").resolve()
+
+# 允许测试写真实配置的逃生开关（默认关闭）。
+ALLOW_TEST_WRITE_ENV = "SHS_ALLOW_TEST_CONFIG_WRITE"
 
 
 # ---------------------------------------------------------------- 工具
@@ -50,11 +68,87 @@ def is_masked(value: str) -> bool:
     return bool(value) and "****" in value
 
 
+# ---------------------------------------------------------------- 写入审计
+# 本模块自己的文件名；扫描调用栈时要跳过它们。
+_SETTINGS_MODULE_FILES = {"settings.py", "settings_store.py"}
+
+
+def _frame_is_test(filename: str) -> bool:
+    """判断某个栈帧是否来自单元测试。"""
+    p = (filename or "").replace("\\", "/").lower()
+    return (
+        "/unittest/" in p
+        or p.endswith("/unittest")
+        or "/tests/" in p
+        or p.endswith("/tests")
+    )
+
+
+def _scan_stack() -> tuple[str, str]:
+    """扫描调用栈，返回 `(最近业务调用者, 测试来源)`。
+
+    测试来源为空字符串表示「非测试上下文」。
+
+    ⚠️ 只切掉 `_scan_stack` 自己那一帧（`[:-1]`），**不要切两帧** ——
+       `save()` 帧由下面的文件名过滤负责。早先写成 `[:-2]`，隐含假设
+       「调用者一定是 `save()`」，结果直接调用时会把真正的用户测试帧一起切掉，
+       审计日志里只剩下 unittest 框架自己的 `case.py:589 in _callTestMethod`，
+       完全定位不到是哪个测试干的。
+
+    ⚠️ 过滤用**精确文件名**而不是子串：`"settings.py" in path` 这种写法
+       早晚会误伤 `test_settings_guard.py` 之类同名前缀的文件。
+    """
+    frames = traceback.extract_stack()[:-1]
+    caller = ""
+    test_src = ""
+    for fr in reversed(frames):
+        if Path(fr.filename or "").name in _SETTINGS_MODULE_FILES:
+            continue
+        if _frame_is_test(fr.filename):
+            if not test_src:
+                test_src = f"{Path(fr.filename).name}:{fr.lineno} in {fr.name}"
+            continue
+        if not caller:
+            caller = f"{Path(fr.filename).name}:{fr.lineno} in {fr.name}"
+    return caller, test_src
+
+
+def _append_audit(record: dict) -> None:
+    """把一条写入记录追加到审计日志（失败绝不影响主流程）。
+
+    记录里**只有服务商名与批次名，不含任何 API Key 或图片数据**。
+    """
+    try:
+        AUDIT_LOG.parent.mkdir(parents=True, exist_ok=True)
+        line = json.dumps(record, ensure_ascii=False)
+        with AUDIT_LOG.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+
+        # 简单轮转：超过 512KB 只保留最后 200 行
+        if AUDIT_LOG.stat().st_size > 512 * 1024:
+            tail = AUDIT_LOG.read_text(encoding="utf-8", errors="replace").splitlines()[-200:]
+            AUDIT_LOG.write_text("\n".join(tail) + "\n", encoding="utf-8")
+    except OSError:
+        pass
+
+
 # ---------------------------------------------------------------- 存储
 class SettingsStore:
     """设置读写。线程内单例式使用即可。"""
 
     def __init__(self, path: Path | str | None = None):
+        """构造设置存储。
+
+        ⚠️ **测试进程 + 没显式给路径 → 强制落到临时目录。**
+           这是「结构上不可能污染」的那一层：哪怕某个测试忘了传路径，
+           它也拿不到真实配置。要写真实路径必须显式传，而那会被守卫拦下。
+        """
+        if (
+            path is None
+            and _running_under_unittest()
+            and os.environ.get(ALLOW_TEST_WRITE_ENV) != "1"
+        ):
+            path = Path(tempfile.mkdtemp(prefix="shs-test-config-")) / "settings.json"
         self.path = Path(path or SETTINGS_FILE)
         self._data: dict | None = None
 
@@ -95,8 +189,51 @@ class SettingsStore:
         return data
 
     # ------------------------------------------------------------ 写
+    def is_real_config(self) -> bool:
+        """当前实例指向的是否是项目真实配置（而非测试临时文件）。
+
+        ⚠️ 判定基准是**固化的 `_REAL_SETTINGS_PATH`**，不是 `SETTINGS_FILE` ——
+           后者能被 `mock.patch.object` 换掉，换掉之后守卫和审计会一起失灵。
+        """
+        try:
+            return self.path.resolve() == _REAL_SETTINGS_PATH
+        except OSError:
+            return False
+
+    def _guard_test_write(self) -> None:
+        """阻止单元测试写坏真实配置。
+
+        ⚠️ 背景：本项目的 `config/settings.json` **两次**在跑测试后被改成
+           `provider=mock`，而逐个文件复跑测试又完全无法复现（23/23 未改），
+           说明触发点在某个「测试失败时的异常路径」上。
+
+           与其继续猜，不如设一道**硬闸**：只要求调用栈里出现 `unittest`
+           或 `tests/`，且写入目标就是真实配置 → 直接拒绝。
+           测试要写配置请用 `SettingsStore(tmp_path)`，那是另一条路径，不受影响。
+        """
+        if not self.is_real_config():
+            return
+        caller, test_src = _scan_stack()
+        if not test_src or os.environ.get(ALLOW_TEST_WRITE_ENV) == "1":
+            return
+
+        _append_audit({
+            "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "action": "BLOCKED",
+            "caller": caller,
+            "test_source": test_src,
+        })
+        raise RuntimeError(
+            "拒绝在单元测试中写入真实配置 config/settings.json\n"
+            f"  调用者：{caller}\n"
+            f"  测试来源：{test_src}\n"
+            "  修正：测试请改用 SettingsStore(临时路径)；"
+            f"确需绕过可设环境变量 {ALLOW_TEST_WRITE_ENV}=1"
+        )
+
     def save(self, patch: dict[str, Any]) -> dict:
         """保存增量配置。会自动处理掩码回传。"""
+        self._guard_test_write()
         current = self.load()
         patch = self._clear_batch_on_output_root_change(patch, current)
         patch = self._merge_secrets(patch, current)
@@ -111,6 +248,20 @@ class SettingsStore:
         tmp.replace(self.path)          # 原子替换
 
         self._data = merged
+
+        # 审计：只记「谁改的」和两个非敏感摘要字段
+        if self.is_real_config():
+            caller, test_src = _scan_stack()
+            active = str((merged.get("output") or {}).get("active_batch") or "")
+            _append_audit({
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "action": "WRITE",
+                "caller": caller,
+                "test_source": test_src,
+                "provider": str(merged.get("active_provider") or ""),
+                "active_batch": active,
+                "keys": sorted(patch.keys()),
+            })
         return merged
 
     def _clear_batch_on_output_root_change(self, incoming: dict, current: dict) -> dict:
@@ -200,8 +351,36 @@ class SettingsStore:
 _store: SettingsStore | None = None
 
 
+def _running_under_unittest() -> bool:
+    """当前进程是否由 unittest / pytest 驱动。
+
+    ⚠️ 只用于**决定单例的落盘位置**，不会改变任何生产行为：
+       服务进程（`main.py web`）永远不会加载 unittest。
+    """
+    return "unittest" in sys.modules or "pytest" in sys.modules
+
+
 def get_store() -> SettingsStore:
+    """返回全局设置单例。
+
+    ⚠️ **测试进程自动隔离** —— 这是 `config/settings.json` 被改成 `mock`
+       的根因修复：
+
+       测试会直接调用真实端点（如 `api_openai_house_regenerate`），而端点内部
+       走的是 `get_store()`。此前单例一律指向真实配置，于是在测试里执行的
+       `save()` / `reset()` 会**真的改写用户配置**；而 `default_settings()`
+       的默认 `active_provider` 恰好是 `"mock"`，一旦 `load()` 读到损坏内容
+       回退默认值，`save()` 就把 `provider=mock` 落了盘（实测两次踩到）。
+
+       现在：只要进程里有 unittest，单例就落到临时目录，真实配置完全隔离。
+       每个测试文件各自新建 `SettingsStore()`（不带参数）的写法仍由
+       `_guard_test_write()` 兜底拦截。
+    """
     global _store
     if _store is None:
-        _store = SettingsStore()
+        if _running_under_unittest() and os.environ.get(ALLOW_TEST_WRITE_ENV) != "1":
+            base = Path(tempfile.mkdtemp(prefix="shs-test-config-"))
+            _store = SettingsStore(base / "settings.json")
+        else:
+            _store = SettingsStore()
     return _store

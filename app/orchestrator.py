@@ -477,7 +477,7 @@ class Orchestrator:
                 self.stats.success += 1
                 self._record(job)
 
-                log.info("✓ %s → %s（%.1fs）", job.display_name, path.name, job.elapsed)
+                log.info("[OK] %s → %s（%.1fs）", job.display_name, path.name, job.elapsed)
                 await self._emit({
                     "type": "job_success",
                     "uid": job.uid,
@@ -513,7 +513,7 @@ class Orchestrator:
                     max_attempts = max(max_attempts, 2)
                     await limiter.cooldown(65.0)
                 if not e.retryable:
-                    log.error("✗ %s 不可重试：%s", job.display_name, e)
+                    log.error("[X] %s 不可重试：%s", job.display_name, e)
                     break
                 if attempt < max_attempts:
                     backoff = self.cfg.retry_backoff[
@@ -534,7 +534,7 @@ class Orchestrator:
             except Exception as e:  # 未知异常按可重试处理
                 self.stats.calls += 1
                 last_error = f"{type(e).__name__}: {e}"
-                log.exception("✗ %s 未预期异常", job.display_name)
+                log.exception("[X] %s 未预期异常", job.display_name)
                 if attempt < self.cfg.retry_max:
                     await asyncio.sleep(self.cfg.retry_backoff[0])
 
@@ -546,7 +546,7 @@ class Orchestrator:
         self.stats.failed += 1
         self._record(job)
         self._current.pop(job.uid, None)
-        log.error("✗ %s 最终失败：%s", job.display_name, job.error)
+        log.error("[X] %s 最终失败：%s", job.display_name, job.error)
         await self._emit({
             "type": "job_failed",
             "uid": job.uid,

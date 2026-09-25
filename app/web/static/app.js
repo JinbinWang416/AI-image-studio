@@ -1115,6 +1115,30 @@
     msg.className = 'msg';
     msg.textContent = '保存中…';
     try {
+      // 路径现在**可手动编辑**，所以保存前先确认它可用。
+      // 「校验」接口会在目录不存在时创建它（parents=True），
+      // 于是用户手输一个全新路径也能直接保存成功。
+      const outPath = ($('s-output') ? $('s-output').value.trim() : '');
+      if (outPath) {
+        try {
+          const v = await api('/api/settings/validate-path', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path: outPath }),
+          });
+          if (!v.ok) {
+            msg.className = 'msg err';
+            msg.textContent = '保存位置不可用：' + (v.message || '未知原因');
+            return;
+          }
+          if (v.resolved && $('s-output')) $('s-output').value = v.resolved;
+        } catch (e) {
+          msg.className = 'msg err';
+          msg.textContent = '校验保存位置失败：' + e.message;
+          return;
+        }
+      }
+
       const d = await api('/api/settings', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -1529,11 +1553,16 @@
   async function newDir() {
     const cur = $('s-output').value.trim();
     const name = prompt(
-      '新建文件夹名称\n（会建在当前目录的同一级，并自动切换过去）\n\n当前：' + cur,
+      '新建保存文件夹\n\n'
+      + '· 只写名称（如 贴纸输出A）\n'
+      + '    → 建在当前目录的同一级\n'
+      + '· 写完整路径（如 F:\\贴纸输出\\批次01）\n'
+      + '    → 建在指定位置（可换到别的盘）\n\n'
+      + '当前：' + cur,
       '');
     if (name === null) return;                 // 取消
     const dirName = name.trim();
-    if (!dirName) { toast('目录名不能为空', true); return; }
+    if (!dirName) { toast('目录名或路径不能为空', true); return; }
 
     try {
       const d = await api('/api/settings/new-dir', {

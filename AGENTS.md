@@ -29,6 +29,32 @@
 - 测试必须使用 mock 服务商、本机虚拟图片或 HTTP 模拟；不得调用付费图像 API。
 - 参考图只能放在 `<输出根目录>\_references`；门店玻璃背景只能放在 `<输出根目录>\_effect_backgrounds`。两种资产都必须按哈希去重。
 
+### ⚠️ 测试进程绝不能写 `config/settings.json`（2026-09-25 两次踩到）
+
+**症状**：跑完测试后，用户配置里的 `active_provider` 从 `qwen` 变成 `mock`，界面退回模拟模式。
+逐个测试文件复跑又完全不复现（23/23「未改」），因为触发点在「测试直接调用真实端点」这条路上。
+
+**链条**：`tests/test_openai_regeneration.py` → `server.api_openai_house_regenerate()`
+→ `get_store().save({"prompt_quality": {...}})` → 单例此前一律指向**真实配置**；
+而 `default_settings()` 的默认 `active_provider` 恰好是 `"mock"`，一落盘就污染。
+
+**二次踩到的真正原因**：守卫和审计都用 `SETTINGS_FILE` 这个**模块全局**做判定，
+`mock.patch.object(mod, "SETTINGS_FILE", tmp)` 一句话就能把它换掉 ——
+换掉之后，指向真实配置的 store 会「看起来不像真实配置」，守卫提前 `return`、
+审计静默跳过，写入畅通无阻（文件 mtime 对得上，审计日志里却一条记录都没有）。
+
+**现有四道防线**（改动前先看 `tests/test_settings_guard.py`，12 条断言锁死）：
+
+1. 测试进程内 `get_store()` 与 `SettingsStore()` 都自动落到临时目录（结构上拿不到真实配置）；
+2. 测试上下文里写真实路径 → 直接抛 `RuntimeError`；
+3. 真实路径判定用模块加载时固化的 **`_REAL_SETTINGS_PATH`** ——
+   **不要**图省事改用 `SETTINGS_FILE`，那个能被 `mock.patch` 换掉；
+4. `logs/settings-writes.log` 审计每次真实写入（含被拦截的），记调用者与测试来源。
+
+**排查同类问题的有效手段**：把 `config/settings.json` 设成只读再跑测试 ——
+绕过的写入会撞锁报错而暴露；配合「测试前 hash → 跑测试 → 测试后 hash」放在同一条命令里比对。
+取证工具：`tools/restore_provider.py --check`（只读）/ `tools/restore_provider.py qwen`（还原并留存现场）。
+
 ## 开发范围（2026-09-20 起）
 
 - **以网页版为唯一交付目标**：`main.py web` → `http://127.0.0.1:8000`，前端在 `app/web/static/`。

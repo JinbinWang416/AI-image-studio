@@ -2082,7 +2082,11 @@ async def api_pick_dir(payload: dict | None = None) -> JSONResponse:
         except Exception:  # noqa: BLE001
             pass
         try:
-            kwargs = {"title": "选择图片保存目录", "mustexist": True}
+            # ⚠️ mustexist=False：允许用户在对话框里**新建文件夹**
+            #    （True 时 Windows 对话框的「新建文件夹」按钮是灰的，
+            #     用户就没法"在选中的盘里创建新目录"）
+            kwargs = {"title": "选择图片保存目录（可在对话框内新建文件夹）",
+                      "mustexist": False}
             if initial and Path(initial).expanduser().is_dir():
                 kwargs["initialdir"] = str(Path(initial).expanduser())
             return filedialog.askdirectory(**kwargs) or ""
@@ -2114,28 +2118,52 @@ _BAD_DIR_CHARS = set('\\/:*?"<>|')
 
 @app.post("/api/settings/new-dir")
 async def api_new_dir(payload: dict | None = None) -> JSONResponse:
-    """在当前保存目录的**同级**新建一个文件夹，并建议切换过去。
+    """新建一个保存目录。
 
-    为什么是「同级」而不是「子目录」：
-        保存目录的语义是"这一批图片放在哪"，换目录 = 换一个平级位置。
-        往里面建子目录会让 `output/` 越套越深，反而更难找。
+    支持两种输入（**向后兼容**）：
+
+    1. **纯目录名**（如 `贴纸输出A`）→ 在当前目录的**同级**创建
+       —— 保存目录的语义是"这一批图片放在哪"，换目录 = 换平级位置；
+       往里建子目录会让 `output/` 越套越深。
+
+    2. **完整绝对路径**（如 `F:\\贴纸输出\\批次01`）→ **直接按该路径创建**
+       —— 这样用户可以在**任意盘符**下新建目录并把输出切过去。
+
+    ⚠️ 路径分隔符校验只针对**目录名片段**：绝对路径本身含 `\\` 和 `:`，
+       若按"目录名"规则校验会被误拒。
     """
     payload = payload or {}
-    name = str(payload.get("name") or "").strip()
+    raw = str(payload.get("name") or "").strip()
     base = str(payload.get("base") or "").strip()
 
-    if not name:
-        return JSONResponse({"ok": False, "message": "目录名不能为空"})
-    if name in (".", "..") or any(c in _BAD_DIR_CHARS for c in name):
-        return JSONResponse({
-            "ok": False,
-            "message": '目录名不能包含 \\ / : * ? " < > | 等字符',
-        })
-    if len(name) > 80:
-        return JSONResponse({"ok": False, "message": "目录名过长（最多 80 字符）"})
+    if not raw:
+        return JSONResponse({"ok": False, "message": "目录名或路径不能为空"})
 
-    cur = Path(base).expanduser() if base else Path(load_config().output_root)
-    target = cur.parent / name
+    candidate = Path(raw).expanduser()
+
+    if candidate.is_absolute():
+        # 绝对路径：逐段校验（跳过盘符/根，它天然含 : 与 \）
+        parts = [p for p in candidate.parts if p not in ("\\", "/")][1:]
+        for part in parts:
+            if any(c in _BAD_DIR_CHARS for c in part):
+                return JSONResponse({
+                    "ok": False,
+                    "message": '路径中不能包含 / : * ? " < > | 等字符',
+                })
+        if len(str(candidate)) > 240:
+            return JSONResponse({"ok": False, "message": "路径过长（最多 240 字符）"})
+        target = candidate
+    else:
+        # 纯目录名：保持"同级"语义
+        if raw in (".", "..") or any(c in _BAD_DIR_CHARS for c in raw):
+            return JSONResponse({
+                "ok": False,
+                "message": '目录名不能包含 \\ / : * ? " < > | 等字符',
+            })
+        if len(raw) > 80:
+            return JSONResponse({"ok": False, "message": "目录名过长（最多 80 字符）"})
+        cur = Path(base).expanduser() if base else Path(load_config().output_root)
+        target = cur.parent / raw
 
     if target.exists():
         return JSONResponse({

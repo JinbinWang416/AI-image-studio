@@ -7,25 +7,28 @@ venv/
 build_venv312/
 
 # ---- 配置（含 API Key，绝不可提交）----
+# ⚠️ 必须用通配符！原来只写 `config/settings.json`（精确匹配），
+#    挡不住 `.bak-printreset` / `.bak-testprep` / `.polluted-*` 这些变体 ——
+#    真实 qwen Key 就是这样泄到 GitHub 的（初始提交 07df576 里的
+#    config/settings.json.bak-printreset，117 字符真 Key，2026-09-25 发现后改写历史移除）。
 .env
-config/settings.json
-
-# ---- 安全：账号与会话（含密码哈希，绝不可提交）----
-data/security/
-
-# ---- 测试产物 / 备份（非源码，不入库）----
-output_local_validation/
-output_local_professional_v9/
-backups/
-*.snapshots
+config/settings.json*
+!config/settings.example.json
 
 # ---- 安全：账号 / 会话 / 备份密钥（含密码哈希，绝不可提交）----
 data/security/
 *.snapshots
 
+# ---- 测试产物 / 备份（非源码，不入库）----
+output_local_validation/
+output_local_professional_v9/
+output_backup_*/
+backups/
+
 # ---- 生成产物 ----
 output/
 logs/
+generated/
 
 # ---- 调研原始资料（体积大，按需保留）----
 research/raw/
@@ -36,12 +39,10 @@ research/raw/
 .DS_Store
 Thumbs.db
 
-# ---- 桌面版构建与隔离验证产物 ----
-desktop/build/
-desktop/dist/
-desktop/debug-build/
-desktop/debug-dist/
-desktop/installer-verification-*/
-desktop/installer-runtime-verification-*/
+# ---- 桌面版构建产物 ----
+# AGENTS.md：桌面版产物已于 2026-09-22 移除，构建脚本保留在 tools/。
+# 这里整体忽略，避免 535 MB 的 build/dist 混进仓库。
+desktop/
+*.spec
 门店贴纸图片生成智能体桌面安装包_*.exe
 门店贴纸图片生成智能体桌面安装包_*.exe.sha256
