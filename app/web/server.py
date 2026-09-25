@@ -116,6 +116,7 @@ async def _storage_error_handler(request: Request, exc: StorageError):
 # ---------------------------------------------------------------- 认证与授权
 # 认证路由（登录/登出/初始化/改密/会话/我的设备/MFA）
 from .auth_routes import (  # noqa: E402
+    current_user,
     optional_user,
     require_permission,
     router as auth_router,
@@ -1772,13 +1773,87 @@ async def api_confirm_prompt_profile_and_run(payload: dict | None = None) -> JSO
     return await _start_full_run({}, create_new_batch=True)
 
 
+# ---------------------------------------------------------------- 设置字段级授权
+# ⚠️ `POST /api/settings` 会把整个 payload **深度合并**进 settings.json，
+#    所以「能调这个接口」等于「能改任何设置」。
+#    只在路由上挂一个权限码是不够的 —— 那会让 `settings.path.manage`
+#    形同虚设：有「管理模型」权限的人可以顺手把输出路径也改掉。
+#    这里按 payload 里**实际出现的字段**逐组校验。
+_SETTINGS_FIELD_PERMISSION: dict[str, str] = {
+    # 密钥与付费账号
+    "active_provider": "settings.model.manage",
+    "providers": "settings.model.manage",
+    "prompt_optimizer": "settings.model.manage",
+    # 输出路径：改错会把数据写到意外位置
+    "output": "settings.path.manage",
+    # 效果图参数与背景
+    "effect": "effect.params.manage",
+    "effect_workflow": "effect.params.manage",
+    # 提示词模板 / 生成参数 / 范围 / 图生图 / 印刷（设计类变更）
+    "prompt_quality": "prompt.template.manage",
+    "generation": "prompt.template.manage",
+    "scope": "prompt.template.manage",
+    "image_workflow": "prompt.template.manage",
+    "print": "prompt.template.manage",
+}
+# 未列出的字段（含以后新增的）落到最严的一档 ——
+# 宁可让新字段默认「只有 admin 能改」，也不要默认放行。
+_SETTINGS_DEFAULT_PERMISSION = "settings.model.manage"
+
+# 这两个键只是回传/元信息，不构成配置变更，不需要额外权限
+_SETTINGS_IGNORED_KEYS = frozenset({"version"})
+
+
+def _require_settings_permissions(user: "User", payload: dict) -> None:
+    """按 payload 的字段分组校验权限，不足则 403 并写审计。
+
+    Raises:
+        HTTPException 403: 缺少修改其中某些字段所需的权限
+    """
+    needed: set[str] = set()
+    for key in payload:
+        if key in _SETTINGS_IGNORED_KEYS:
+            continue
+        needed.add(_SETTINGS_FIELD_PERMISSION.get(key, _SETTINGS_DEFAULT_PERMISSION))
+
+    missing = sorted(c for c in needed if not security_service.has_permission(user, c))
+    if not missing:
+        return
+
+    security_service.audit.log(
+        action="access.denied",
+        module="settings",
+        result="denied",
+        actor_id=user.id,
+        actor_name=user.display_name,
+        actor_roles=user.roles,
+        target_type="endpoint",
+        target_id="POST /api/settings",
+        error_kind="forbidden",
+        detail=(
+            f"缺少权限：{', '.join(missing)}；"
+            f"提交字段：{', '.join(sorted(k for k in payload if k not in _SETTINGS_IGNORED_KEYS))}"
+        ),
+    )
+    raise HTTPException(
+        status_code=403,
+        detail=f"没有修改这些设置的权限（需要 {'、'.join(missing)}）",
+    )
+
+
 @app.post("/api/settings")
-async def api_save_settings(payload: dict | None = None) -> JSONResponse:
+async def api_save_settings(
+    payload: dict | None = None,
+    user: "User" = Depends(current_user),
+) -> JSONResponse:
     """保存设置。
 
     自动处理 API Key 的掩码回传：值含 `****` 视为「未修改」，保持原 Key。
+
+    ⚠️ 授权按**字段**分组（见 `_SETTINGS_FIELD_PERMISSION`），不是整个接口一刀切。
     """
     payload = payload or {}
+    _require_settings_permissions(user, payload)
     generation = payload.get("generation")
     if isinstance(generation, dict) and "size" in generation:
         generation["size"] = _normalise_size(generation.get("size"))
