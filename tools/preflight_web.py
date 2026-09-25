@@ -155,7 +155,7 @@ def main() -> int:
 
         ev(tid, 'fetch("/api/auth/login",{method:"POST",'
                 'headers:{"Content-Type":"application/json"},'
-                'body:JSON.stringify({login_name:"admin",password:"' + os.environ.get("SHS_ADMIN_PW", "") + '"})})'
+                'body:JSON.stringify({login_name:"admin",password:"' + os.environ.get("SHS_ADMIN_PW", "") + '"SHS_ADMIN_PW", "") + '"})})'
                 '.then(function(r){window.__login=r.status})')
         time.sleep(3)
         login_st = val(tid, "window.__login")
