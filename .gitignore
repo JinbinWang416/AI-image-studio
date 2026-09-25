@@ -52,5 +52,11 @@ Thumbs.db
 # 这里整体忽略，避免 535 MB 的 build/dist 混进仓库。
 desktop/
 *.spec
+
+# ---- 打包产物（delivery/ 单次可到 600+ MB，绝不能入库）----
+# tools/make_portable_pack.py 与 tools/make_delivery_pack.py 的默认输出目录。
+# ⚠️ 之前漏了这条 —— 打完包后 delivery/ 会直接出现在 git status 里。
+delivery/
+*.zip
 门店贴纸图片生成智能体桌面安装包_*.exe
 门店贴纸图片生成智能体桌面安装包_*.exe.sha256
