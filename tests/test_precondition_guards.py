@@ -366,5 +366,104 @@ class BatchSnapshotFreezeTests(unittest.TestCase):
         self.assertEqual(out.model, "mock-v1")
 
 
+class SecretScannerTests(unittest.TestCase):
+    """P1-06：密钥扫描工具必须真的能扫出东西。
+
+    旧版有两个致命缺陷（评审指出，已实测确认）：
+
+    1. **正则太窄** —— 字段名白名单只认 `password` 这类全称，且要求值 **≥16 位**。
+       而真实的管理员密码叫 `PW`、只有 8 位，于是 13 处硬编码**一处都没报出来**。
+    2. **`--git-all` 是假的** —— 它只从 `git rev-list --objects` 取**路径**，
+       再去读**当前工作树**的文件；已删除的文件压根没被检查过。
+    """
+
+    @staticmethod
+    def _mod():
+        import sys
+        from pathlib import Path
+
+        tools_dir = str(Path(__file__).resolve().parent.parent / "tools")
+        if tools_dir not in sys.path:
+            sys.path.insert(0, tools_dir)
+        import check_git_secrets
+
+        return check_git_secrets
+
+    def test_bundled_selftest_passes(self) -> None:
+        """工具自带的合成样本必须全部符合预期。
+
+        ⚠️ 样本是**合成的**，不含任何真实凭据 —— 评审特意强调过不要把真密码
+           放进测试夹具。
+        """
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent.parent / "tools" / "check_git_secrets.py"
+        r = subprocess.run(
+            [sys.executable, str(script), "--selftest"],
+            capture_output=True, text=True, encoding="utf-8",
+        )
+        self.assertEqual(r.returncode, 0, f"自检未通过：\n{r.stdout}\n{r.stderr}")
+
+    def test_short_and_abbreviated_credentials_are_detected(self) -> None:
+        """缩写字段名 + 短密码必须检出 —— 这正是旧版漏掉 13 处的原因。"""
+        mod = self._mod()
+        for sample in (
+            'PW = "abcdefgh"',                       # 8 位，字段名是缩写
+            'ADMIN_PW = "hunter2xy"',
+            '{"login":"admin","password":"hunter2xyz"}',
+            'password:"noquote12345"',               # 键没有引号
+            'ap.add_argument("--password", default="secret123")',
+        ):
+            self.assertTrue(mod.scan_text(sample, "app/x.py"),
+                            f"{sample!r} 应被检出（旧版会漏）")
+
+    def test_markers_and_placeholders_are_not_flagged(self) -> None:
+        """进度标记常量与占位符不该被报 —— 否则工具全是噪音，没人会看。"""
+        mod = self._mod()
+        for sample in ('PASS = "✅"', 'PASSWORD = ""', 'password = "***"',
+                       'api_key = "your-api-key-here"', 'pwd = "xxx"'):
+            self.assertFalse(mod.scan_text(sample, "app/x.py"),
+                             f"{sample!r} 不该被报")
+
+    def test_fixture_names_are_downgraded_not_dropped(self) -> None:
+        """测试夹具要**降级**显示而不是直接消失 —— 万一它真匹配了某个账号呢。"""
+        mod = self._mod()
+        hits = mod.scan_text('FIXTURE_PW = "Str0ng!Passw0rd"', "tools/verify_x.py")
+        self.assertTrue(hits, "夹具仍应列出，供人工确认")
+        self.assertIn("[?]", hits[0], "夹具应降级为 [?] 而不是 [!!]")
+        self.assertIn("FIXTURE_PW", hits[0], "应显示变量全名，而不是光秃秃的 PW")
+
+    def test_tests_dir_hits_are_downgraded(self) -> None:
+        mod = self._mod()
+        hits = mod.scan_text('PW = "abcd1234"', "tests/test_x.py")
+        self.assertTrue(hits)
+        self.assertIn("[?]", hits[0])
+
+    def test_app_path_hits_are_high_severity(self) -> None:
+        """真正的源码路径里出现凭据，必须是最高级别。"""
+        mod = self._mod()
+        hits = mod.scan_text('ADMIN_PW = "abcd1234"', "app/web/server.py")
+        self.assertTrue(hits)
+        self.assertIn("[!!]", hits[0], "app/ 下的硬编码凭据必须是 [!!]")
+
+    def test_git_all_reads_history_not_working_tree(self) -> None:
+        """`--git-all` 扫到的对象数必须**多于** `--git`。
+
+        旧版两者数量相同（都是工作树文件数），因为 `--git-all` 只取了路径、
+        读的还是工作树 —— 这个断言就是为了钉死这一点。
+        """
+        mod = self._mod()
+        tracked = len(mod.iter_tracked())
+        allblobs = len(mod.iter_all_blobs())
+        self.assertGreater(tracked, 0, "一个已跟踪文件都没读到")
+        self.assertGreater(
+            allblobs, tracked,
+            f"--git-all({allblobs}) 没有多于 --git({tracked})，"
+            "说明它没有真正读取历史对象",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
