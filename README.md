@@ -60,10 +60,12 @@ cd "E:\1_Software\6_AI工具\deepseek\2_开发\图片生成"
 另有 JPEG 缩略图，便于在网页上快速核对。
 
 - 接口：`GET /api/print-export/{batch_id}` 查状态，`POST /api/print-export/{batch_id}/{store_index}` 执行导出
-- CMYK 转换依赖系统颜色目录里的 ICC profile（`C:\Windows\System32\spool\drivers\color`），
-  文件名需为下列之一（按优先级）：`RSWOP.icm`、`USWebCoatedSWOP.icc`、`ISOcoated_v2_eci.icc`、
-  `CoatedFOGRA39.icc`、`default_cmyk.icc`。找不到时会降级为朴素转换，
-  并**在 manifest 里写入警告**（颜色会有偏差，建议向印刷厂索取匹配的 profile）
+- **CMYK 转换优先用印刷厂的 ICC profile**，查找顺序：
+  ① 设置里显式指定的路径 → ② **项目 `config/icc/` 目录**（放 `*.icc` / `*.icm`，推荐做法）→
+  ③ 系统颜色目录 `C:\Windows\System32\spool\drivers\color` 下名为 `RSWOP.icm`、
+  `USWebCoatedSWOP.icc`、`ISOcoated_v2_eci.icc`、`CoatedFOGRA39.icc`、`default_cmyk.icc` 的文件。
+  三处都找不到时会降级为朴素转换，并**在 manifest 里写入警告**（颜色会有偏差）
+- ⚠️ ICC profile 通常有版权，**不要提交到仓库**（`config/icc/*.icc` 已在 `.gitignore` 中排除）
 - ⚠️ 白墨极性按**印刷惯例**（不透明区印白墨）。这一项做反会导致整批报废，
   工艺需要「满版白墨 + 图案镂空」时用 `print_white_ink_invert` 反转
 - 导出**不修改**任何原始 PNG，只在门店目录下新增 `印刷TIF/` 与 `预览/` 子目录，并写入 `print_manifest.json`

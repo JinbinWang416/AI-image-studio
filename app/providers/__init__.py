@@ -48,16 +48,36 @@ def _lazy(name: str) -> type[BaseProvider] | None:
         from .openai import OpenAIImageProvider
         return OpenAIImageProvider
     if name == "kling":
-        from .kling import KlingProvider
-        return KlingProvider
+        # ⚠️ `catalog.py` 里有「快手可灵」的配置（前端下拉会显示出来），但
+        #    `app/providers/` 下**并没有** kling.py。早先这里直接写
+        #    `from .kling import KlingProvider`，用户一选中就抛
+        #    ModuleNotFoundError —— 提示的是「模块找不到」，而不是「这个服务商还没做」。
+        raise ProviderError(
+            "「快手可灵」的适配器尚未实现，请在设置里改选其它服务商"
+            "（千问 / OpenAI / Gemini / Seedream / 本地 FLUX / 模拟）",
+            retryable=False,
+            code="PROVIDER_NOT_IMPLEMENTED",
+        )
     if name == "zhipu":
-        from .zhipu import ZhipuProvider
-        return ZhipuProvider
+        # 同上：只有配置，没有实现。
+        raise ProviderError(
+            "「智谱 GLM」的适配器尚未实现，请在设置里改选其它服务商"
+            "（千问 / OpenAI / Gemini / Seedream / 本地 FLUX / 模拟）",
+            retryable=False,
+            code="PROVIDER_NOT_IMPLEMENTED",
+        )
     return None
 
 
 def available_providers() -> list[str]:
-    return ["mock", "flux_local", "qwen", "openai", "gemini", "seedream", "kling", "zhipu"]
+    """返回**真正有适配器实现**的服务商。
+
+    ⚠️ 不要在这里列 `kling` / `zhipu`：`catalog.py` 里确实有它们的配置
+       （前端下拉会显示出来），但 `app/providers/` 下并没有 kling.py / zhipu.py。
+       把它们算作「可选」会让 `get_provider()` 一路走到 import 才炸，
+       用户看到的是一句 `ModuleNotFoundError`，而不是「这个服务商还没做」。
+    """
+    return ["mock", "flux_local", "qwen", "openai", "gemini", "seedream", "custom"]
 
 
 def get_provider(name: str) -> type[BaseProvider]:

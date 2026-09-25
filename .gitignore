@@ -15,6 +15,14 @@ build_venv312/
 config/settings.json*
 !config/settings.example.json
 
+# ---- ICC profile：有版权，且只对本机印刷条件有意义 ----
+# `app/print_export/cmyk.py` 会优先读 config/icc/ 下的 *.icc / *.icm，
+# 但这些文件不该入库，只保留 config/icc/README.md 说明放什么。
+config/icc/*.icc
+config/icc/*.icm
+config/icc/*.ICC
+config/icc/*.ICM
+
 # ---- 安全：账号 / 会话 / 备份密钥（含密码哈希，绝不可提交）----
 data/security/
 *.snapshots
