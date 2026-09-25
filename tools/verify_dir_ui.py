@@ -65,7 +65,7 @@ def main() -> int:
             time.sleep(1)
         ev(tid, 'fetch("/api/auth/login",{method:"POST",'
                 'headers:{"Content-Type":"application/json"},'
-                'body:JSON.stringify({login_name:"admin",password:"' + os.environ.get("SHS_ADMIN_PW", "") + '"SHS_ADMIN_PW", "") + '"})})')
+                'body:JSON.stringify({login_name:"admin",password:"' + os.environ.get("SHS_ADMIN_PW", "") + '"})})')
         time.sleep(3)
         subprocess.run(["curl.exe", "-s", "-X", "POST", "--data-raw", SITE,
                         f"{PROXY}/navigate?target={tid}"], capture_output=True)
