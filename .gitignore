@@ -54,9 +54,11 @@ desktop/
 *.spec
 
 # ---- 打包产物（delivery/ 单次可到 600+ MB，绝不能入库）----
-# tools/make_portable_pack.py 与 tools/make_delivery_pack.py 的默认输出目录。
-# ⚠️ 之前漏了这条 —— 打完包后 delivery/ 会直接出现在 git status 里。
+# tools/make_portable_pack.py 与 tools/make_delivery_pack.py 的默认输出目录，
+# `_portable_stage/` 是它们的中间暂存目录（同样几百 MB）。
+# ⚠️ 之前漏了这两条 —— 打完包后会直接出现在 git status 里。
 delivery/
+_portable_stage/
 *.zip
 门店贴纸图片生成智能体桌面安装包_*.exe
 门店贴纸图片生成智能体桌面安装包_*.exe.sha256
