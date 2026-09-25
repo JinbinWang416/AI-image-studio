@@ -479,8 +479,15 @@ def _apply_snapshot_and_assets(cfg, snapshot: dict | None = None):
         cfg.realism_iteration,
     )
     selected = snapshot.get("store_indexes") if isinstance(snapshot.get("store_indexes"), list) else cfg.selected_store_indexes
+    # ⚠️ 服务商与模型也来自快照，避免「续跑时换了模型」把批次搞串味。
+    #    老批次（本次修复之前创建的）快照里没有这两个键，此时退回当前设置 ——
+    #    不能因为缺字段就报错，否则历史批次全部无法续跑。
+    snapshot_provider = str(snapshot.get("active_provider") or "").strip()
+    snapshot_model = str(snapshot.get("model") or "").strip()
     cfg = dataclasses.replace(
         cfg,
+        provider=snapshot_provider or cfg.provider,
+        model=snapshot_model or cfg.model,
         selected_store_indexes=[str(x) for x in selected],
         image_mode=mode,
         reference_assets=list(refs),
@@ -517,6 +524,16 @@ def _new_batch_snapshot(cfg, store_indexes: list[str]) -> dict:
     return {
         "store_indexes": store_indexes,
         "prompt_version": cfg.prompt_version or "current",
+        # ⚠️ 必须冻结**服务商与模型**。
+        #
+        #    否则「继续当前批次」会拿**当前设置**去建 provider ——
+        #    用户中途换了模型（或换了服务商）再续跑，同一个批次里就会混进
+        #    两种模型的产物，而批次快照本该是不可变的。
+        #    这正是 AGENTS.md「不可破坏的行为」第 1 条：
+        #      「开始/继续当前批次」只执行当前批次快照中的未完成任务；
+        #        它不能被后来修改的范围、模型或比例改变。
+        "active_provider": cfg.provider,
+        "model": cfg.model,
         "generation": {"size": cfg.size},
         "image_workflow": {"mode": cfg.image_mode, "reference_assets": _reference_publics(cfg)},
         "prompt_quality": {

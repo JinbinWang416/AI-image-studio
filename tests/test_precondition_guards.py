@@ -284,5 +284,87 @@ class AccessRulePathTests(unittest.TestCase):
         self.assertIsNone(perm)
 
 
+class BatchSnapshotFreezeTests(unittest.TestCase):
+    """P1-02：批次快照必须冻结**服务商与模型**。
+
+    AGENTS.md「不可破坏的行为」第 1 条：开始/继续当前批次只执行当前批次快照中的
+    未完成任务，它不能被后来修改的范围、模型或比例改变。
+
+    早先 `_new_batch_snapshot()` 只记 store_indexes / prompt_version / size /
+    image_workflow / prompt_quality / effect_workflow，**唯独不记 provider 与 model**；
+    `_apply_snapshot_and_assets()` 也不恢复它们 —— 于是「继续当前批次」会拿
+    **当前设置**去建 provider，用户中途换了模型再续跑，同一批次里就混进两种模型的产物。
+    """
+
+    def _cfg(self, **overrides):
+        """构造一个带指定 provider/model 的配置。
+
+        ⚠️ 两版的构造方式**不同**，测试必须两边都能跑：
+
+        - 生产版是 57 个平铺字段，`provider` / `model` 是真正的 dataclass 字段，
+          用 `dataclasses.replace()` 即可
+        - 架构版（Phase 0 重构后）它们变成了**兼容 `@property`**（真实字段在
+          12 个子配置里），`dataclasses.replace()` 会抛
+          `TypeError: Config.__init__() got an unexpected keyword argument 'provider'`
+          —— 必须走 `with_config()`
+
+        所以优先用 `with_config()`，没有时退回 `dataclasses.replace()`。
+        """
+        import dataclasses
+
+        from app.config import load_config
+
+        cfg = load_config()
+        try:
+            from app.config import with_config
+        except ImportError:
+            return dataclasses.replace(cfg, **overrides)
+        return with_config(cfg, **overrides)
+
+    def test_snapshot_captures_provider_and_model(self) -> None:
+        from app.web.server import _new_batch_snapshot
+
+        cfg = self._cfg(provider="qwen", model="qwen-image-3.0")
+        snap = _new_batch_snapshot(cfg, ["01"])
+        self.assertEqual(snap.get("active_provider"), "qwen",
+                         "快照没记服务商，续跑时无从恢复")
+        self.assertEqual(snap.get("model"), "qwen-image-3.0",
+                         "快照没记模型，续跑时会用当前设置的模型")
+
+    def test_apply_restores_from_snapshot_over_current_settings(self) -> None:
+        """当前设置与快照不一致时，必须以**快照**为准。"""
+        from app.web.server import _apply_snapshot_and_assets
+
+        cfg = self._cfg(provider="openai", model="gpt-image-2.5-flare")
+        snap = {
+            "active_provider": "qwen",
+            "model": "qwen-image-3.0",
+            "image_workflow": {"mode": "text"},
+        }
+        out = _apply_snapshot_and_assets(cfg, snap)
+        self.assertEqual(out.provider, "qwen", "续跑没有回到批次冻结的服务商")
+        self.assertEqual(out.model, "qwen-image-3.0", "续跑没有回到批次冻结的模型")
+
+    def test_legacy_snapshot_without_provider_falls_back(self) -> None:
+        """本次修复之前创建的老批次没有这两个键 —— 必须退回当前设置而非报错。"""
+        from app.web.server import _apply_snapshot_and_assets
+
+        cfg = self._cfg(provider="mock", model="mock-v1")
+        out = _apply_snapshot_and_assets(cfg, {"image_workflow": {"mode": "text"}})
+        self.assertEqual(out.provider, "mock", "老批次缺字段时不该改变当前服务商")
+        self.assertEqual(out.model, "mock-v1")
+
+    def test_blank_snapshot_values_fall_back(self) -> None:
+        """快照里是空串时同样退回当前设置（不能把 provider 设成空）。"""
+        from app.web.server import _apply_snapshot_and_assets
+
+        cfg = self._cfg(provider="mock", model="mock-v1")
+        out = _apply_snapshot_and_assets(
+            cfg, {"active_provider": "", "model": "", "image_workflow": {"mode": "text"}}
+        )
+        self.assertEqual(out.provider, "mock")
+        self.assertEqual(out.model, "mock-v1")
+
+
 if __name__ == "__main__":
     unittest.main()
