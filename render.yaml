@@ -9,6 +9,9 @@
 #   - $PORT 由 Render 自动注入；本应用 main.py 的 --port 接收它。
 #   - --i-know-its-public 是因为部署环境初始无账号，需先拉起服务，再在网页首次访问时创建管理员。
 #     账号创建后建议去掉该参数（但免费层磁盘为临时盘，重启会丢账号，故测试期可保留）。
+#   - ⚠️ 免费层磁盘是**临时的**：`config/settings.json` 与 `data/security/` 重启即丢。
+#     所以「网页上改了设置」在冷启动后不会保留 —— 这是 P0-02 记录的限制，
+#     要持久化需要付费层挂载磁盘，或把关键配置全部走环境变量。
 
 services:
   - type: web
@@ -21,12 +24,38 @@ services:
     startCommand: python main.py web --host 0.0.0.0 --port $PORT --i-know-its-public
     healthCheckPath: /
     envVars:
-      - key: PROVIDER
-        value: mock           # 零 API Key 即可跑通界面与模拟生成；要真实出图改为 qwen/openai 并填对应 Key
       - key: PORT
         sync: false           # 由 Render 自动注入，不要手动定值
-      # 真实出图示例（按需取消注释并填值，或在 Render 控制台 Environment 里添加）：
-      # - key: DASHSCOPE_API_KEY
-      #   value: sk-xxxxxxxx
-      # - key: OPENAI_API_KEY
-      #   value: sk-xxxxxxxx
+
+      # ⚠️ **不要在这里设 `PROVIDER`。**
+      #
+      #    配置优先级是：环境变量 > `config/settings.json` > 内置预设
+      #    （见 `app/config.py` 的 provider 解析）。
+      #    一旦设了它，网页「设置 → 模型服务」里选的服务商会被**永久压掉** ——
+      #    表现就是：明明选了千问，顶栏却始终显示「本地模拟 · mock-v1」，
+      #    无论怎么改、怎么保存都没用。
+      #
+      #    实测踩过：本文件原先写着 `PROVIDER: mock`，部署到 Render 后
+      #    网页选千问完全不生效，根因就在这里。
+      #
+      #    不设它，服务商就由网页选择决定。
+
+      # 密钥仍然走环境变量 —— `app/config.py` 的取值顺序是：
+      #     api_key = 环境变量(<该服务商的 env_key>) or settings.json 里的值
+      # 所以下面配上之后，网页上不必再填 Key，而且密钥不落盘、更安全。
+      #
+      # `sync: false` = 「值在 Render 控制台里填」，不要写进仓库。
+
+      - key: DASHSCOPE_API_KEY      # 阿里云百炼（千问）
+        sync: false
+      # 需要别的服务商时按需取消注释（变量名取自 app/providers/catalog.py 的 env_key）：
+      # - key: OPENAI_API_KEY         # OpenAI GPT Image
+      #   sync: false
+      # - key: GEMINI_API_KEY         # Google Gemini
+      #   sync: false
+      # - key: ARK_API_KEY            # 字节 Seedream
+      #   sync: false
+      # - key: KLING_API_KEY          # 快手可灵（适配器尚未实现）
+      #   sync: false
+      # - key: ZHIPU_API_KEY          # 智谱 GLM（适配器尚未实现）
+      #   sync: false
