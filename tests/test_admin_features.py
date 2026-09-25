@@ -23,7 +23,12 @@ from app.security.users import UserStore  # noqa: E402
 import app.web.auth_routes as auth_routes  # noqa: E402
 from app.web.server import app  # noqa: E402
 
-PW = os.environ.get("SHS_ADMIN_PW", "")
+# ⚠️ 测试夹具密码：**不能**默认成空串。
+#    早先被批量脚本改成 `os.environ.get("SHS_ADMIN_PW", "")`，没设环境变量时
+#    就是空密码，被「至少 10 位」的强度规则拒绝，一次性挂掉 66 个测试。
+#    这里给一个满足强度规则的固定测试值（不匹配任何真实账号），
+#    需要时仍可用环境变量覆盖。
+PW = os.environ.get("SHS_ADMIN_PW") or "Str0ng!Passw0rd"
 
 
 class Base(unittest.TestCase):

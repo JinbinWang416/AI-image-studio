@@ -13,7 +13,9 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
+import shutil
 import sys
 import tempfile
 import traceback
@@ -23,6 +25,8 @@ from typing import Any
 
 from .paths import PACKAGE_ROOT, STATE_ROOT
 from .providers.catalog import default_settings
+
+log = logging.getLogger("app.settings")
 
 ROOT = PACKAGE_ROOT
 CONFIG_DIR = STATE_ROOT / "config"
@@ -159,16 +163,42 @@ class SettingsStore:
             return self._data
 
         data = default_settings()
+        self.corrupt = False
         if self.path.exists():
             try:
                 raw = json.loads(self.path.read_text(encoding="utf-8"))
-                if isinstance(raw, dict):
-                    data = deep_merge(data, raw)
-            except (json.JSONDecodeError, OSError):
-                # 配置损坏 → 用默认值，不阻塞
-                pass
+                if not isinstance(raw, dict):
+                    raise ValueError("配置根节点不是 JSON 对象")
+                data = deep_merge(data, raw)
+            except (json.JSONDecodeError, OSError, UnicodeDecodeError, ValueError) as exc:
+                # ⚠️ 配置损坏时**不能静默回退默认值**。
+                #
+                #    默认值里 `active_provider = "mock"`，而这份 data 会被缓存下来，
+                #    之后任何一次 `save()` 都拿它当 base 写回文件 ——
+                #    于是一次「读取故障」就升级成「配置被永久覆盖成 mock」。
+                #    本项目的 config/settings.json 正是这样被改坏过两次
+                #    （PowerShell 写出 BOM 导致 json 读不动，紧接着 save 把 mock 落了盘）。
+                #
+                #    现在：把读不懂的文件原样留档 + 打上 corrupt 标记，
+                #    让后续 save() 也知道自己在覆盖一份没能读懂的配置。
+                self.corrupt = True
+                self._corrupt_reason = f"{type(exc).__name__}: {exc}"
+                self._quarantine()
         self._data = data
         return data
+
+    def _quarantine(self) -> None:
+        """把读不懂的配置原样留档，便于人工恢复。"""
+        try:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            keep = self.path.with_name(f"{self.path.name}.corrupt.{stamp}")
+            shutil.copy2(self.path, keep)
+            log.warning(
+                "配置损坏，已留档 %s（原因：%s）—— 后续 save() 将覆盖当前配置",
+                keep.name, getattr(self, "_corrupt_reason", ""),
+            )
+        except OSError:
+            pass
 
     def masked(self) -> dict:
         """给前端的版本：API Key 全部打码。"""
@@ -235,6 +265,24 @@ class SettingsStore:
         """保存增量配置。会自动处理掩码回传。"""
         self._guard_test_write()
         current = self.load()
+
+        if getattr(self, "corrupt", False):
+            # ⚠️ 走到这里说明：load() 没能读懂原文件，`current` 其实是**默认值**，
+            #    写回就等于用默认值覆盖用户配置（active_provider 会退回 "mock"）。
+            #
+            #    这里不阻塞用户 —— 否则配置一坏就再也改不动了，只能手工删文件。
+            #    但必须留痕：原文件已在 load() 里留档为
+            #    `settings.json.corrupt.<时间戳>`，这里再写一条审计。
+            caller, _ = _scan_stack() if self.is_real_config() else ("", "")
+            _append_audit({
+                "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "action": "OVERWRITE_CORRUPT",
+                "caller": caller,
+                "reason": getattr(self, "_corrupt_reason", ""),
+                "keys": sorted(patch.keys()),
+            })
+            log.warning("用默认值覆盖了读不懂的配置：%s", self.path)
+
         patch = self._clear_batch_on_output_root_change(patch, current)
         patch = self._merge_secrets(patch, current)
         merged = deep_merge(current, patch)

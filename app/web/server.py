@@ -870,6 +870,31 @@ def _require_confirmed_account_recovery(cfg) -> bool:
     return True
 
 
+def _require_usable_provider(cfg) -> None:
+    """在**创建批次之前**确认当前服务商真的可用。
+
+    ⚠️ 不要等到 `create_provider()` 才失败 —— 那个调用点在批次创建 / active_batch
+       切换之后，一旦抛错就会留下一个空批次（用户反馈过：点了「重新生成（新批次）」
+       看到报错，但活动批次已经被切走、真实感档位也已递增）。
+
+    这里只做**解析**（与 `create_provider()` 同一条路径），不实例化、
+       不读 Key、不产生任何副作用。
+    """
+    from ..providers import get_provider
+
+    try:
+        get_provider(cfg.provider)
+    except ProviderError as exc:
+        # 余额/鉴权之类不在这里；这里主要是「未知服务商」与
+        # 「适配器尚未实现」（kling / zhipu）
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(
+            status_code=400,
+            detail=f"服务商「{cfg.provider}」不可用：{exc}",
+        ) from exc
+
+
 async def _start_full_run(
     payload: dict | None = None,
     *,
@@ -900,10 +925,26 @@ async def _start_full_run(
         # 在没有证据的情况下承诺无上限的“更真实”。
         next_realism = min(3, _realism_level(cfg.realism_iteration) + 1)
         cfg = dataclasses.replace(cfg, realism_iteration=next_realism)
-        get_store().save({"prompt_quality": {"realism_iteration": next_realism}})
         run_scope = _scope_for_config(cfg, repo, {})
+
+        # ⚠️ 所有前置校验必须在**产生副作用之前**做完。
+        #
+        #    早先的顺序是「save(档位) → create_batch() → … → validate()」，
+        #    于是「服务商没实现」「API Key 没填」这类失败会留下三样东西：
+        #      ① 真实感档位已经被永久提高（写进了 settings.json）
+        #      ② 空批次目录已落盘
+        #      ③ active_batch 已切到这个空批次
+        #    后续「继续当前批次」的语义随之被破坏 —— 用户点一次报错，
+        #    批次却被换掉了。
         if not run_scope:
             raise HTTPException(status_code=400, detail="请先在“生成范围”至少勾选一个门店")
+        problems = cfg.validate()
+        if problems:
+            raise HTTPException(status_code=400, detail="；".join(problems))
+        _require_usable_provider(cfg)
+
+        # ---- 校验全部通过，到这里才开始产生副作用 ----
+        get_store().save({"prompt_quality": {"realism_iteration": next_realism}})
         batch = create_batch(cfg, get_store(), _new_batch_snapshot(cfg, run_scope))
         cfg = dataclasses.replace(
             cfg,
@@ -917,10 +958,12 @@ async def _start_full_run(
         run_scope = _scope_for_config(cfg, repo, snapshot)
         if not run_scope:
             raise HTTPException(status_code=400, detail="当前生成范围为空，请在设置中勾选门店后创建新批次")
+        # 同上：校验先于任何副作用（这个分支没有副作用，但保持一致）
+        problems = cfg.validate()
+        if problems:
+            raise HTTPException(status_code=400, detail="；".join(problems))
+        _require_usable_provider(cfg)
 
-    problems = cfg.validate()
-    if problems:
-        raise HTTPException(status_code=400, detail="；".join(problems))
     recovery_confirmed = _require_confirmed_account_recovery(cfg)
 
     storage = Storage(
