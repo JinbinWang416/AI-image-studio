@@ -20,6 +20,26 @@ import time
 import socket
 import threading
 import webbrowser
+from pathlib import Path
+
+# ⚠️ **必须在任何第三方库被 import 之前修好 stdout/stderr。**
+#
+#    PyInstaller 的 `--windowed` 模式**没有控制台**，于是 `sys.stdout` 与
+#    `sys.stderr` 都是 `None`。而 uvicorn 的默认日志格式器会调用
+#    `sys.stdout.isatty()`：
+#
+#        AttributeError: 'NoneType' object has no attribute 'isatty'
+#        → ValueError: Unable to configure formatter 'default'
+#
+#    现象就是「双击图标，窗口闪一下没了」，而且 `--windowed` 下**没有任何输出**
+#    可看。实测排查了很久，最后靠崩溃日志才定位到。
+#
+#    这里给它们接一个 os.devnull —— 文件对象自带 `isatty()`（返回 False），
+#    所以任何写 stdout/stderr 的库都不会再崩。
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115
 
 # 桌面模式默认 mock：免 API Key、离线可用
 os.environ.setdefault("PROVIDER", "mock")
@@ -147,5 +167,72 @@ def main() -> None:
     _DesktopUI(server, port).run()
 
 
+def _write_crash_log(exc: BaseException) -> str:
+    """把启动失败的现场写到用户数据目录，返回文件路径。
+
+    ⚠️ 打包成桌面版时用的是 ``--windowed``（**没有控制台**），
+       一旦启动过程中抛异常，用户看到的现象就是「双击图标，窗口闪一下没了」，
+       完全不知道为什么。这个函数就是为了让那种情况留下可查的证据。
+
+       故意**不依赖** logging（可能还没初始化完），直接写文件；
+       路径也刻意避开 STATE_ROOT 的创建逻辑，失败时退回临时目录。
+    """
+    import traceback
+    from datetime import datetime
+
+    try:
+        from app.paths import STATE_ROOT
+
+        base = Path(STATE_ROOT) / "logs"
+        base.mkdir(parents=True, exist_ok=True)
+    except Exception:  # noqa: BLE001 - 连路径都拿不到就退回临时目录
+        import tempfile
+
+        base = Path(tempfile.gettempdir())
+
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    target = base / f"desktop-crash-{stamp}.txt"
+    try:
+        target.write_text(
+            "桌面版启动失败\n"
+            f"时间：{datetime.now():%Y-%m-%d %H:%M:%S}\n"
+            f"Python：{sys.version}\n"
+            f"frozen：{getattr(sys, 'frozen', False)}\n"
+            f"可执行文件：{sys.executable}\n"
+            f"MEIPASS：{getattr(sys, '_MEIPASS', '(无)')}\n"
+            f"工作目录：{os.getcwd()}\n"
+            f"异常类型：{type(exc).__name__}\n"
+            f"异常信息：{exc}\n"
+            "\n---- 调用栈 ----\n"
+            + "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+            encoding="utf-8",
+        )
+        return str(target)
+    except OSError:
+        return ""
+
+
 if __name__ == "__main__":
-    main()
+    # ⚠️ 桌面版是「双击运行」的：异常必须留下证据，不能静默退出。
+    #    实测踩过：打包后双击毫无反应，而 --windowed 模式没有任何输出可看。
+    try:
+        main()
+    except BaseException as _exc:  # noqa: BLE001 - 包括 SystemExit/KeyboardInterrupt
+        _path = _write_crash_log(_exc)
+        if _path:
+            try:
+                import tkinter.messagebox as _mb
+                import tkinter as _tk
+
+                _r = _tk.Tk()
+                _r.withdraw()
+                _mb.showerror(
+                    "启动失败",
+                    f"程序启动时出错：\n\n{type(_exc).__name__}: {_exc}\n\n"
+                    f"详细信息已写入：\n{_path}",
+                )
+                _r.destroy()
+            except Exception:  # noqa: BLE001 - 连弹窗都失败就算了
+                pass
+        raise
+
