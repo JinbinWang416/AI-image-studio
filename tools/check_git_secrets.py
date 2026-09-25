@@ -34,6 +34,16 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+from pathlib import Path
+
+# ⚠️ Windows 默认控制台是 GBK，本文件的 `print("  [OK ] …")` 之类会抛
+#    UnicodeEncodeError 并以退出码 1 结束 —— 看起来像「扫描失败」，
+#    实际只是打印失败。（第一次修 P2-03 时只改了 run_selfcheck.py，
+#     忘了这个新写的工具，导致默认终端下测试挂 1 项。）
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _console import enable_safe_output  # noqa: E402
+
+enable_safe_output()
 
 # ---------------------------------------------------------------- 凭据识别
 # ⚠️ 字段名必须覆盖**缩写**：真实项目里管理员密码就叫 `PW` / `ADMIN_PW`。
@@ -160,45 +170,69 @@ def iter_tracked() -> list[tuple[str, str]]:
 def iter_all_blobs() -> list[tuple[str, str]]:
     """**全部历史对象**里的 blob → [(sha:路径, 文本内容)]。
 
-    ⚠️ 必须走 `cat-file --batch` 读 blob **内容**。
-       早先的实现只取路径、再读工作树 —— 已删除的文件完全没被检查，
-       「历史扫描」名不副实。
+    ⚠️ 两个必须守住的点（都实测踩过）：
+
+    **① 必须读 blob 内容，不能读工作树。**
+       早先的实现只从 `rev-list --objects` 取**路径**，再去读当前工作树的文件 ——
+       已删除的文件、只在历史里存在的版本压根没被检查，「历史扫描」名不副实。
+
+    **② 只能把 blob 的 SHA 送进 `--batch`。**
+       `git cat-file --batch` 的响应流里，非 blob 对象（tree / commit）的
+       **内容照样占字节**。如果对它们直接 `continue` 而不前移游标，后续解析
+       全部错位 —— 实测应读 379 个 blob 只返回 311 个，而**漏掉的 68 个里
+       恰好包含全部 15 个含旧密码的对象**，让这个门禁变成「永远绿灯」。
+       所以先用 `--batch-check` 拿类型，**只把 blob 挑出来**再读内容。
     """
     listing = _git("rev-list", "--objects", "--all")
     entries: list[tuple[str, str]] = []
     for line in listing.decode("utf-8", errors="replace").splitlines():
         parts = line.split(" ", 1)
-        if len(parts) != 2:
-            continue
-        entries.append((parts[0], parts[1]))
+        if len(parts) == 2:
+            entries.append((parts[0], parts[1]))
     if not entries:
         return []
 
-    # 一次喂给 cat-file --batch，流式读回
-    payload = "".join(sha + "\n" for sha, _ in entries).encode()
+    # ---- 第一趟：--batch-check 拿类型，只留 blob ----
+    chk = subprocess.run(
+        ["git", "cat-file", "--batch-check"],
+        input="".join(sha + "\n" for sha, _ in entries).encode(),
+        capture_output=True,
+    )
+    kinds: dict[str, str] = {}
+    for line in chk.stdout.decode("utf-8", errors="replace").splitlines():
+        seg = line.split()
+        if len(seg) >= 2:
+            kinds[seg[0]] = seg[1]
+
+    blobs = [(sha, path) for sha, path in entries if kinds.get(sha) == "blob"]
+    if not blobs:
+        return []
+
+    # ---- 第二趟：只喂 blob，严格按 size 前移游标 ----
     proc = subprocess.run(
-        ["git", "cat-file", "--batch"], input=payload, capture_output=True
+        ["git", "cat-file", "--batch"],
+        input="".join(sha + "\n" for sha, _ in blobs).encode(),
+        capture_output=True,
     )
     out: list[tuple[str, str]] = []
-    blob = proc.stdout
+    buf = proc.stdout
     pos = 0
-    for sha, path in entries:
-        nl = blob.find(b"\n", pos)
+    for sha, path in blobs:
+        nl = buf.find(b"\n", pos)
         if nl < 0:
             break
-        header = blob[pos:nl].decode("utf-8", errors="replace")
+        seg = buf[pos:nl].decode("utf-8", errors="replace").split()
         pos = nl + 1
-        # header: "<sha> <type> <size>" ；缺失对象是 "<sha> missing"
-        seg = header.split()
-        if len(seg) != 3 or seg[1] != "blob":
+        if len(seg) != 3:
+            # 走到这里说明上游给了非 blob，理论上不会发生
             continue
         try:
             size = int(seg[2])
         except ValueError:
             continue
-        content = blob[pos: pos + size]
-        pos += size + 1                      # 跳过尾随换行
-        if size > 4 * 1024 * 1024:           # 超大二进制跳过
+        content = buf[pos: pos + size]
+        pos += size + 1                  # 跳过内容 + 尾随换行
+        if size > 4 * 1024 * 1024:       # 超大二进制不扫
             continue
         out.append((f"{sha[:8]}:{path}", content.decode("utf-8", errors="ignore")))
     return out

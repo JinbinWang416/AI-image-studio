@@ -60,7 +60,7 @@ from ..providers.catalog import PROVIDER_CATALOG
 from ..core.paths import PACKAGE_ROOT
 from ..prompt.profiles import DEFAULT_QUALITY_TEMPLATE, PromptProfileError, validate_template
 from ..state.assets import EffectBackgroundStore, ReferenceAssetError, ReferenceAssetStore, validate_mode_assets
-from ..state.settings_store import get_store
+from ..state.settings_store import ConfigCorruptError, get_store
 from ..state.storage import Storage
 from ..state.store_repo import StoreRepository
 
@@ -489,10 +489,32 @@ def _apply_snapshot_and_assets(cfg, snapshot: dict | None = None):
     #    不能因为缺字段就报错，否则历史批次全部无法续跑。
     snapshot_provider = str(snapshot.get("active_provider") or "").strip()
     snapshot_model = str(snapshot.get("model") or "").strip()
+
+    # ⚠️ 只改 `provider` / `model` 两个**字符串**是不够的。
+    #
+    #    `api_key`、`base_url` 仍然来自**当前设置** —— 于是「切到 OpenAI 之后
+    #    续跑一个千问批次」会拿 **OpenAI 的密钥和地址**去发请求，
+    #    产物来源也再不可核验。
+    #
+    #    正确做法：按快照的 provider，从**当前安全配置**里重新解析该服务商的
+    #    完整配置，再套上快照冻结的 model。密钥只从安全存储读取，
+    #    **绝不写进批次快照**（快照会落盘到批次目录）。
+    provider_overrides: dict = {}
+    if snapshot_provider and snapshot_provider != cfg.provider:
+        stored = (get_store().load().get("providers") or {}).get(snapshot_provider) or {}
+        provider_overrides = {
+            "provider": snapshot_provider,
+            "api_key": str(stored.get("api_key") or ""),
+            "base_url": str(stored.get("base_url") or ""),
+            "model": snapshot_model or str(stored.get("model") or ""),
+        }
+    elif snapshot_model:
+        # 服务商没变，但模型可能被快照冻结成了别的值
+        provider_overrides = {"model": snapshot_model}
+
     cfg = with_config(
         cfg,
-        provider=snapshot_provider or cfg.provider,
-        model=snapshot_model or cfg.model,
+        **provider_overrides,
         selected_store_indexes=[str(x) for x in selected],
         image_mode=mode,
         reference_assets=list(refs),
@@ -1889,6 +1911,22 @@ async def api_save_settings(
             raise HTTPException(status_code=400, detail=f"实拍门店背景不可用：{exc}") from exc
     try:
         get_store().save(payload)
+    except ConfigCorruptError as exc:
+        # 409：不是请求本身有问题，而是**服务端状态**（配置文件损坏）需要先处理。
+        # 这里必须给出可操作的恢复路径，而不是一句「保存失败」。
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "配置文件损坏，已拒绝保存（避免用默认值覆盖你原有的设置）",
+                "path": str(exc.path),
+                "backup": str(exc.backup) if exc.backup else "",
+                "reason": exc.reason,
+                "next": (
+                    "① 把留档文件修好后覆盖回原路径，再重试保存；或 "
+                    "② 确认放弃原配置，调用 POST /api/settings/reset-corrupt"
+                ),
+            },
+        ) from exc
     except Exception as e:                                   # noqa: BLE001
         raise HTTPException(status_code=400, detail=f"保存失败：{e}") from e
 
@@ -1913,6 +1951,34 @@ async def api_save_settings(
 async def api_reset_settings() -> JSONResponse:
     """恢复出厂设置（保留已填写的 API Key 与 Base URL）。"""
     get_store().reset()
+    return JSONResponse({"ok": True, "settings": get_store().masked()})
+
+
+@app.post("/api/settings/reset-corrupt")
+async def api_reset_corrupt_settings(
+    user: "User" = Depends(require_permission("settings.model.manage")),
+) -> JSONResponse:
+    """确认重置一份**读不懂**的配置。
+
+    ⚠️ 这是给「配置损坏」准备的人工恢复出口 ——
+       普通 `save()` 与普通 `reset()` 都会拒绝，因为 `load()` 拿到的是默认值，
+       直接写回会把用户原有的 provider / 密钥引用 / 输出路径永久抹掉。
+       必须有人在这里**明确确认**才会动它，而且前提是损坏文件**已留档成功**：
+       留档都失败了就返回 409，要求先手工备份。
+    """
+    try:
+        get_store().reset(allow_corrupt=True)
+    except ConfigCorruptError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": "拒绝重置损坏的配置",
+                "path": str(exc.path),
+                "backup": str(exc.backup) if exc.backup else "",
+                "reason": exc.reason,
+            },
+        ) from exc
+    STATE.publish({"type": "settings_saved", "provider": load_config().provider})
     return JSONResponse({"ok": True, "settings": get_store().masked()})
 
 

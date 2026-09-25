@@ -105,6 +105,8 @@ PATH_PERMISSION_RULES: tuple[tuple[str, str, str | None], ...] = (
     #    被误判成「管理模型与 API Key」—— 权限码用错了。
     ("POST", "/api/settings/pick-dir", "settings.path.manage"),
     ("POST", "/api/settings/new-dir", "settings.path.manage"),
+    # 配置损坏后的人工恢复出口：会用默认值重置，必须是最严的那一档权限
+    ("POST", "/api/settings/reset-corrupt", "settings.model.manage"),
     # ⚠️ `POST /api/settings` 这里**故意不挂权限码**：
     #    它会把整个 payload 深度合并进 settings.json，可改字段横跨
     #    「模型 / 路径 / 提示词 / 效果图」四组权限 —— 一刀切必然不是过严就是过松
