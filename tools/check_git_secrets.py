@@ -1,141 +1,277 @@
 # -*- coding: utf-8 -*-
-"""扫描 git **已跟踪**的文件，找出任何非空密钥字面量。
+"""密钥扫描门禁：检查 git **对象内容**（含历史、含已删除文件）里的疑似凭据。
 
-⚠️ 只输出「文件名:行号 字段名 长度」，**绝不打印密钥内容**。
-⚠️ 用法（两段式，避免 Python 直接调 git 时的编码/沙箱问题）：
+⚠️ 只输出「位置 + 字段名 + 值长度」，**绝不打印值本身**。
 
-    git ls-files > %TEMP%\\tracked.txt
-    python tools/check_git_secrets.py %TEMP%\\tracked.txt
+## 为什么重写了
 
-    # 也可顺带扫历史里出现过的所有 blob：
-    git rev-list --objects --all | git cat-file --batch-check="%(objectname) %(rest)" > %TEMP%\\allobj.txt
-    python tools/check_git_secrets.py %TEMP%\\allobj.txt
+上一版有两个致命缺陷，导致它**报不出真实泄露**：
 
-退出码：发现疑似真实密钥返回 1（可直接串进推送前的 gate）。
+1. **正则太窄**：字段名白名单只有 `api_key|access_token|password|...`，
+   而且要求值**长度 ≥ 16**。而真实的管理员密码叫 `PW` / `ADMIN_PW`、只有 8 位 ——
+   全部被静默过滤。（当时 13 处硬编码管理员密码，它一处都没报出来。）
+2. **`--git-all` 是假的**：它只从 `git rev-list --objects` 里取**路径**，
+   然后去读**当前工作树**的文件。已删除的文件、只在历史里存在的版本，
+   压根没被检查过。
+
+现在改为：用 `git cat-file --batch` **流式读取真实 blob 内容**，逐字节扫描。
+
+## 用法
+
+    # 当前已跟踪文件
+    python tools/check_git_secrets.py --git
+
+    # 全部历史对象（含已删除文件），这是发布门禁该用的模式
+    python tools/check_git_secrets.py --git-all
+
+    # 自检：用合成样本验证检出率（不含任何真实凭据）
+    python tools/check_git_secrets.py --selftest
+
+退出码：0 = 干净，1 = 发现疑似凭据，2 = 本次结论无效（别当成「干净」）。
 """
 from __future__ import annotations
 
 import re
+import subprocess
 import sys
-from pathlib import Path
 
-# 值长度 >= 16 才算「像真的」；测试里的 sk-abcdef 之类会被长度过滤掉
-PATTERN = re.compile(
-    r'["\']?(api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|password)["\']?'
-    r'\s*[:=]\s*'
-    r'["\']([^"\']{16,})["\']',
-    re.IGNORECASE,
+# ---------------------------------------------------------------- 凭据识别
+# ⚠️ 字段名必须覆盖**缩写**：真实项目里管理员密码就叫 `PW` / `ADMIN_PW`。
+#    早先只认 `password` 全称，于是 13 处硬编码一个都没报出来。
+_CRED_WORD = (
+    r"api[_-]?key|access[_-]?token|refresh[_-]?token|client[_-]?secret|"
+    r"secret|token|credential|"
+    r"password|passwd|pwd|pass|pw"
 )
 
-# 这些明显是占位/示例，不算泄露
-PLACEHOLDER = re.compile(
-    r"^(sk-)?(x{4,}|a{8,}|\*{4,}|your|test|demo|example|placeholder|changeme|todo)",
-    re.IGNORECASE,
+# ① 赋值 / 键值：  PW = "值"   ADMIN_PW = "值"   "password": "值"   password:"值"
+# ⚠️ `field` 必须把**前导标识符**一起吃掉（`ADMIN_PW` / `FIXTURE_PW` / `TMP_PW`）——
+#    早先只捕获到光秃秃的 `PW`，既看不懂变量全名，也无法据此判断它是不是测试夹具。
+_KV = re.compile(
+    rf"""(?ix)
+    (?P<field>["']?[A-Za-z_]*?(?:{_CRED_WORD})["']?)     # 字段名（含前缀，引号可有可无）
+    \s*[:=]\s*
+    (?P<q>["'])                               # 值的引号
+    (?P<val>[^"'\n]{{4,200}})                 # 值：**长度下限降到 4**
+    (?P=q)
+    """
 )
 
-TEXT_EXT = {
-    ".py", ".js", ".ts", ".json", ".md", ".txt", ".yml", ".yaml",
-    ".toml", ".ini", ".cfg", ".html", ".css", ".ps1", ".sh", ".env", ".bat",
-}
-MAX_BYTES = 2 * 1024 * 1024
+# ② argparse 默认值：ap.add_argument("--password", default="值")
+_ARG_DEFAULT = re.compile(
+    rf"""(?ix)
+    add_argument\([^)]*?(?:{_CRED_WORD})[^)]*?
+    default\s*=\s*
+    (?P<q>["'])(?P<val>[^"'\n]{{4,200}})(?P=q)
+    """
+)
+
+# 明显是占位 / 掩码 / 标记的值，不算泄露
+_PLACEHOLDER = re.compile(
+    r"""(?ix)^(
+        sk-?x{4,}|x{4,}|a{8,}|\*{2,}|\.{3,}|_{3,}|-{3,}|
+        your|test|demo|example|sample|placeholder|changeme|todo|fixme|
+        none|null|true|false|changeme
+    )"""
+)
+# 纯符号/单字符（`PASS = "✅"` 这种进度标记常量）
+_MARKER = re.compile(r"^[^\w]{0,3}$")
+
+# 变量名里带这些词的，基本可判定为测试夹具（结构化识别，不靠人肉看）
+_FIXTURE_HINT = re.compile(r"(?i)(fixture|dummy|sample|fake|stub|test|tmp|temp|probe|example)")
 
 
 def looks_real(value: str) -> bool:
-    if PLACEHOLDER.match(value):
+    """判断一个字面量是否「像真实凭据」而非占位符/标记。"""
+    if len(value) < 4:
         return False
-    if set(value) <= {"*", "x", "X", "0"}:     # 全是掩码字符
+    if _PLACEHOLDER.match(value) or _MARKER.match(value):
         return False
-    # 至少要有一定字符多样性，纯重复串不算
-    return len(set(value)) >= 8
+    if set(value) <= set("*xX0. "):            # 全是掩码字符
+        return False
+    # 至少要有一定字符多样性；纯重复串（aaaaaa）不算
+    return len(set(value)) >= 3
 
 
-def is_text_candidate(p: Path) -> bool:
-    """判断是否值得当文本扫。
+def _severity(path: str, field: str = "") -> tuple[str, str]:
+    """按路径与变量名给命中分级。
 
-    ⚠️ 不能只看 `p.suffix in TEXT_EXT` —— 备份文件的扩展名是 `.bak-printreset`
-       这种复合形式（`Path("settings.json.bak-printreset").suffix` 得到
-       `.bak-printreset`），会被白名单静默跳过。而**恰恰是这类备份文件**
-       最容易带着真实 Key 混进仓库（实测就是它泄到了 GitHub）。
+    测试目录里的字面量、以及 `FIXTURE_PW` / `TMP_PW` 这类**按命名就能看出是夹具**
+    的变量，都不该和 `app/` 里的真凭据混在一起报 —— 否则每次跑都一片红，
+    人就会开始无视这个工具。分级后真实泄露才显眼。
     """
-    name = p.name.lower()
-    if p.suffix.lower() in TEXT_EXT:
-        return True
-    # 名字里带这些标记的，一律按文本处理
-    return any(mark in name for mark in (".json", ".env", ".bak", ".yaml", ".yml", ".ini", ".cfg", ".txt", ".py"))
+    p = path.replace("\\", "/").lower()
+    if _FIXTURE_HINT.search(field or ""):
+        return "[?] ", "（变量名含 fixture/tmp/test 之类，多为测试夹具）"
+    if "/tests/" in p or p.startswith("tests/") or "_test." in p or p.endswith("_test.py"):
+        return "[?] ", "（测试目录，多为夹具，请确认是否匹配真实账号）"
+    if p.endswith((".md", ".txt", ".json", ".mjs")):
+        return "[?] ", "（文档/脚本，请确认是否示例）"
+    return "[!!]", ""
 
 
-def _names_from_git(all_objects: bool) -> list[str]:
-    """直接调 git 取文件名清单。
+def scan_text(text: str, where: str, *, is_test_path: bool = False) -> list[str]:
+    """扫一段文本，返回命中描述（不含值本身）。"""
+    hits: list[str] = []
+    seen: set[tuple[int, str]] = set()
 
-    ⚠️ 不要在 PowerShell 里用 `git ls-files > file.txt` 再交给 Python ——
-       PS 5.1 的 `>` 默认写 **UTF-16LE**，Python 按 UTF-8 读出来每两字节夹一个
-       `\\x00`，417 个路径会全部「不存在」，扫描静默变成 0 个文件（结论完全无效，
-       实测踩到）。要落盘也必须 `Out-File -Encoding utf8` 或走本函数这条路。
+    def add(line_no: int, field: str, val: str) -> None:
+        key = (line_no, field.lower())
+        if key in seen:
+            return
+        seen.add(key)
+        tag, note = ("[?] ", "") if is_test_path else _severity(where, field)
+        hits.append(f"  {tag} {where}:{line_no}  字段={field}  长度={len(val)}{note}")
+
+    for m in _KV.finditer(text):
+        val = m.group("val")
+        if looks_real(val):
+            add(text[: m.start()].count("\n") + 1, m.group("field").strip("\"'"), val)
+
+    for m in _ARG_DEFAULT.finditer(text):
+        val = m.group("val")
+        if looks_real(val):
+            add(text[: m.start()].count("\n") + 1, "add_argument", val)
+
+    return hits
+
+
+# ---------------------------------------------------------------- git 读取
+def _git(*args: str) -> bytes:
+    return subprocess.run(
+        ["git", "-c", "core.quotepath=false", *args], capture_output=True
+    ).stdout
+
+
+def iter_tracked() -> list[tuple[str, str]]:
+    """当前已跟踪文件 → [(名称, 文本内容)]。"""
+    out: list[tuple[str, str]] = []
+    for raw in _git("ls-files", "-z").split(b"\0"):
+        rel = raw.decode("utf-8", errors="replace").strip()
+        if not rel:
+            continue
+        data = _git("show", f"HEAD:{rel}")
+        if not data:
+            continue
+        out.append((rel, data.decode("utf-8", errors="ignore")))
+    return out
+
+
+def iter_all_blobs() -> list[tuple[str, str]]:
+    """**全部历史对象**里的 blob → [(sha:路径, 文本内容)]。
+
+    ⚠️ 必须走 `cat-file --batch` 读 blob **内容**。
+       早先的实现只取路径、再读工作树 —— 已删除的文件完全没被检查，
+       「历史扫描」名不副实。
     """
-    import subprocess
+    listing = _git("rev-list", "--objects", "--all")
+    entries: list[tuple[str, str]] = []
+    for line in listing.decode("utf-8", errors="replace").splitlines():
+        parts = line.split(" ", 1)
+        if len(parts) != 2:
+            continue
+        entries.append((parts[0], parts[1]))
+    if not entries:
+        return []
 
-    cmd = ["git", "-c", "core.quotepath=false", "ls-files"]
-    if all_objects:
-        cmd = ["git", "-c", "core.quotepath=false", "rev-list", "--objects", "--all"]
-    raw = subprocess.run(cmd, capture_output=True).stdout
-    lines = raw.decode("utf-8", errors="replace").splitlines()
-    if all_objects:
-        # "sha path" → 取 path；没有空格的（tree/commit）跳过
-        lines = [ln.split(" ", 1)[1] for ln in lines if " " in ln]
-    seen: dict[str, None] = {}
-    for ln in lines:
-        ln = ln.strip()
-        if ln:
-            seen[ln] = None
-    return list(seen)
+    # 一次喂给 cat-file --batch，流式读回
+    payload = "".join(sha + "\n" for sha, _ in entries).encode()
+    proc = subprocess.run(
+        ["git", "cat-file", "--batch"], input=payload, capture_output=True
+    )
+    out: list[tuple[str, str]] = []
+    blob = proc.stdout
+    pos = 0
+    for sha, path in entries:
+        nl = blob.find(b"\n", pos)
+        if nl < 0:
+            break
+        header = blob[pos:nl].decode("utf-8", errors="replace")
+        pos = nl + 1
+        # header: "<sha> <type> <size>" ；缺失对象是 "<sha> missing"
+        seg = header.split()
+        if len(seg) != 3 or seg[1] != "blob":
+            continue
+        try:
+            size = int(seg[2])
+        except ValueError:
+            continue
+        content = blob[pos: pos + size]
+        pos += size + 1                      # 跳过尾随换行
+        if size > 4 * 1024 * 1024:           # 超大二进制跳过
+            continue
+        out.append((f"{sha[:8]}:{path}", content.decode("utf-8", errors="ignore")))
+    return out
+
+
+# ---------------------------------------------------------------- 自检
+SELFTEST_SAMPLES = [
+    # (样本, 是否应当报出)
+    ('PW = "Str0ng!Passw0rd"', True),                       # 缩写字段名 + 8~15 位
+    ('ADMIN_PW = "abcdefgh"', True),                        # 8 位短密码（旧版会漏）
+    ('{"login":"admin","password":"hunter2xyz"}', True),    # JSON
+    ('password:"noquote12345"', True),                      # 键无引号
+    ('ap.add_argument("--password", default="secret123")', True),   # argparse
+    ('api_key = "sk-1234567890abcdef"', True),
+    ('PASS = "✅"', False),                                 # 进度标记常量
+    ('PASSWORD = ""', False),                               # 空串
+    ('password = "***"', False),                            # 掩码
+    ('api_key = "your-api-key-here"', False),               # 占位
+    ('pwd = "xxx"', False),                                 # 占位
+]
+
+
+def selftest() -> int:
+    print("=" * 74)
+    print("自检：合成样本检出率（不含任何真实凭据）")
+    print("=" * 74)
+    ok = True
+    for sample, should_hit in SELFTEST_SAMPLES:
+        hits = scan_text(sample, "sample")
+        got = bool(hits)
+        mark = "OK " if got == should_hit else "FAIL"
+        if got != should_hit:
+            ok = False
+        expect = "应报出" if should_hit else "应放过"
+        print(f"  [{mark}] {expect}  {sample[:56]}")
+    print("=" * 74)
+    print("  全部符合预期 ✅" if ok else "  有不符合预期的样本 ❌")
+    return 0 if ok else 1
 
 
 def main() -> int:
     if len(sys.argv) < 2:
         print(__doc__)
         return 2
-
     arg = sys.argv[1]
-    if arg in ("--git", "--git-all"):
-        names = _names_from_git(all_objects=arg == "--git-all")
-        origin = "git 已跟踪文件" if arg == "--git" else "git 全部历史对象"
+
+    if arg == "--selftest":
+        return selftest()
+
+    if arg == "--git":
+        items = iter_tracked()
+        origin = "git 已跟踪文件（读对象内容）"
+    elif arg == "--git-all":
+        items = iter_all_blobs()
+        origin = "git 全部历史 blob（含已删除文件）"
     else:
-        listing = Path(arg)
-        names = [ln.strip() for ln in listing.read_text(encoding="utf-8-sig", errors="ignore").splitlines() if ln.strip()]
-        origin = f"清单文件 {listing.name}"
+        print(__doc__)
+        return 2
 
     hits: list[str] = []
-    scanned = 0
-    missing = 0
+    for where, text in items:
+        hits.extend(scan_text(text, where))
 
-    for rel in names:
-        p = Path(rel)
-        if not p.is_file():
-            missing += 1
-            continue
-        if not is_text_candidate(p):
-            continue
-        try:
-            if p.stat().st_size > MAX_BYTES:
-                continue
-            text = p.read_text(encoding="utf-8", errors="ignore")
-        except OSError:
-            continue
-        scanned += 1
-        for m in PATTERN.finditer(text):
-            if looks_real(m.group(2)):
-                line_no = text[: m.start()].count("\n") + 1
-                hits.append(f"  [!!] {rel}:{line_no}  {m.group(1)}  长度={len(m.group(2))}")
-
-    print(f"[{origin}] 条目 {len(names)} 个，实际扫描文本 {scanned} 个（跳过 {missing} 个不存在）：")
-    if scanned == 0:
-        print("  [!!] 一个文件都没扫到 —— 清单或编码有问题，本次结论无效，别当成「干净」")
+    print(f"[{origin}] 扫描 {len(items)} 个对象：")
+    if not items:
+        print("  [!!] 一个对象都没读到 —— 本次结论无效，别当成「干净」")
         return 2
     if hits:
         print("\n".join(hits))
-        print(f"\n[!!] 发现 {len(hits)} 处疑似真实密钥 —— 绝不能推送")
+        print(f"\n[!!] 发现 {len(hits)} 处疑似凭据 —— 绝不能推送")
+        print("     （提示：测试夹具也会被列出，请人工确认是否匹配真实账号）")
         return 1
-    print("  [OK] 未发现真实密钥字面量")
+    print("  [OK] 未发现疑似凭据")
     return 0
 
 
