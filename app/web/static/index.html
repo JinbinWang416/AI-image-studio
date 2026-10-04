@@ -93,6 +93,12 @@
     </span>
     <span class="tech-meta" id="meta">正在加载…</span>
   </div>
+
+  <!-- ⚠️ 当前设置与「当前批次」的服务商不一致时显示。
+       「开始/继续当前批次」用的是批次快照里冻结的服务商与模型
+       （见 P1-02 / F-01），所以切换设置后旧批次不会跟着变。
+       不加这条提示的话，用户会以为设置没生效 —— 实测踩过。 -->
+  <div class="provider-mismatch-hint" id="provider-mismatch-hint" hidden aria-live="polite"></div>
 </section>
 
 <section class="recovery-banner" id="recovery-banner" hidden aria-live="polite"></section>

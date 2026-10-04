@@ -687,6 +687,27 @@ def _restore_account_recovery_from_manifests(cfg, manifests: ManifestStore, stor
             return
 
 
+def _batch_provider_model(batch_id: str) -> tuple[str, str]:
+    """从批次目录名解析出该批次实际使用的服务商与模型。
+
+    命名格式为 ``batch_<YYYYMMDD>_<HHMMSS>_<provider>_<model>``，
+    例如 ``batch_20260919_162605_mock_mock-v1``。
+
+    ⚠️ 从**目录名**解析，而不是去读批次目录里的 ``_batch.json``：
+       `/api/state` 是高频接口，为了两个展示字段去碰磁盘不划算；
+       而这个命名格式本身就是为了「一眼看出批次用了什么」才这么起的。
+
+    Returns:
+        ``(provider, model)``；不是批次目录名或格式不符时返回 ``("", "")``。
+    """
+    if not batch_id or not batch_id.startswith("batch_"):
+        return "", ""
+    parts = batch_id.split("_", 4)
+    if len(parts) < 5:
+        return "", ""
+    return parts[3], parts[4]
+
+
 def build_state_payload(cfg=None) -> dict:
     """汇总当前整体状态，供前端渲染。"""
     cfg = cfg or load_config()
@@ -798,6 +819,15 @@ def build_state_payload(cfg=None) -> dict:
             "is_legacy": not bool(cfg.batch_id),
             "base_root": str(cfg.output_base_root),
             "run_snapshot": batch_snapshot,
+            # ⚠️ 批次**自己**用的服务商与模型（从批次目录名解析）。
+            #
+            #    为什么需要它：顶栏原先只显示 `config.provider_label`，也就是
+            #    **当前设置**。但「开始/继续当前批次」用的是**批次快照**冻结的服务商
+            #    （见 P1-02 / F-01），两者可以不一致 —— 于是用户切到 OpenAI 之后
+            #    看到顶栏还写着「本地模拟 · mock-v1」，会以为设置没生效。
+            #    实测就踩了这个误解，所以把批次的服务商单独暴露出来给前端对比。
+            "provider": _batch_provider_model(cfg.batch_id)[0],
+            "model": _batch_provider_model(cfg.batch_id)[1],
         },
         "scope": {
             "store_indexes": active_scope,

@@ -165,17 +165,48 @@
   function renderMeta(extra) {
     const c = STATE.config;
     const batch = STATE.batch || {};
+
+    // ⚠️ 必须区分「当前设置」与「批次快照」的服务商。
+    //
+    //    「开始/继续当前批次」用的是批次**快照**里冻结的服务商与模型
+    //    （见 P1-02 / F-01），所以两者可以不一致：用户把设置切到 OpenAI 之后，
+    //    已存在的旧批次仍然按它当初的 mock 继续跑。
+    //
+    //    顶栏原先只写「服务商 X」，用户切换设置后看到名字没变，
+    //    会以为「保存了但不生效」—— 实测就踩过这个误解。
+    //    现在明确标注「当前设置」，并把批次用的模型一并列出。
+    const batchProvider = String(batch.provider || '');
+    const batchModel = String(batch.model || '');
+    const mismatch = !!batchProvider && batchProvider !== String(c.provider || '');
+
     const rateText = c.rpm_limit
       ? `（${c.rpm_limit} RPM${c.provider === 'qwen' ? '；安全调度 16 RPM' : ''}）`
       : '（无 QPS 限制）';
     $('meta').innerHTML =
-      `服务商 <b>${esc(c.provider_label)}</b> · 模型 <b>${esc(c.model)}</b> · ` +
+      `当前设置 <b>${esc(c.provider_label)}</b> · 模型 <b>${esc(c.model)}</b> · ` +
       `并发 <b>${c.concurrency}</b>` +
       rateText +
       ` · 批次 <b>${esc(batch.label || '原始输出目录')}</b>` +
+      (batchProvider ? `（此批次用 <b>${esc(batchModel || batchProvider)}</b> 生成）` : '') +
       ` · 比例 <b>${esc(c.size || '1024x1024')}</b>` +
       ` · 输出 <b>${esc(c.output_root)}</b>` +
       (extra ? ` · ${esc(extra)}` : '');
+
+    // 两者不一致时给一条可操作的提示，而不是让用户自己猜
+    const hint = $('provider-mismatch-hint');
+    if (hint) {
+      if (mismatch) {
+        hint.hidden = false;
+        hint.innerHTML =
+          `⚠️ 当前批次仍在用 <b>${esc(batchModel || batchProvider)}</b> 生成` +
+          `（批次开始后服务商与模型就冻结了，不会被后改的设置影响）。` +
+          `想用刚设置的 <b>${esc(c.provider_label)}</b> 出图，请点上面的` +
+          `「✨ 重新生成（新批次）」。`;
+      } else {
+        hint.hidden = true;
+        hint.textContent = '';
+      }
+    }
   }
 
   function renderCurrent() {

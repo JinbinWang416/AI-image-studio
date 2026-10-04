@@ -1,0 +1,63 @@
+# Docker 构建时忽略的东西 —— 目的有两个：
+#   ① 让镜像小、构建快（本地那几百 MB 产物不该进镜像）
+#   ② **别把用户数据打进镜像**（API Key、门店照片、出图都在这些目录里）
+
+# ---------------------------------------------------------------- 用户数据（绝不进镜像）
+# ⚠️ 这几条最重要：config/settings.json 里有 API Key，
+#    output/ 里有用户的门店照片和出图。
+#    镜像一旦带出去，等于把凭据和隐私一起分发了。
+config/settings.json*
+config/icc/*.icc
+config/icc/*.icm
+output/
+logs/
+data/security/
+data/backups/
+.rembg/
+
+# ---------------------------------------------------------------- 版本控制与编辑器
+.git/
+.gitignore
+.gitattributes
+.github/
+.vscode/
+.idea/
+*.swp
+
+# ---------------------------------------------------------------- Python 环境与缓存
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------- 本地构建产物
+desktop/
+dist/
+build/
+delivery/
+_portable_stage/
+*.zip
+*.exe
+*.spec
+
+# ---------------------------------------------------------------- 测试与文档（运行不需要）
+tests/
+docs/
+评审/
+
+# ---------------------------------------------------------------- 杂项
+*.log
+*.tmp
+*.bak
+*.bak-*
+.env
+.env.*
+!.env.example
+.DS_Store
+Thumbs.db

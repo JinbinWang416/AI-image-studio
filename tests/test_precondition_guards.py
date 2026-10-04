@@ -548,5 +548,61 @@ class SecretScannerTests(unittest.TestCase):
         )
 
 
+class BatchProviderLabelTests(unittest.TestCase):
+    """顶栏必须能区分「当前设置的服务商」与「这个批次用的服务商」。
+
+    **实测背景**：用户把设置切到 OpenAI 并**保存成功**（`settings-writes.log`
+    里有 `provider: openai` 的写入记录、`settings.json` 里 `active_provider`
+    确实是 `openai`），但顶栏仍写着「本地模拟 · mock-v1」，
+    于是以为「保存了但不生效」。
+
+    真相是：「开始/继续当前批次」用的是**批次快照冻结**的服务商与模型
+    （P1-02 / F-01），那个批次是 9-19 用 mock 建的，切换设置不会影响它 ——
+    行为本身是对的，是**界面没说清**。
+
+    修法：把批次自己的服务商解析出来一并返回给前端，不一致时给出
+    「想用新设置请点『重新生成（新批次）』」的提示。
+    """
+
+    @staticmethod
+    def _parse(batch_id: str):
+        from app.web.server import _batch_provider_model
+
+        return _batch_provider_model(batch_id)
+
+    def test_parses_real_batch_dir_names(self) -> None:
+        """真实批次目录名的解析 —— 格式是 batch_<日期>_<时间>_<服务商>_<模型>。"""
+        for raw, want in (
+            ("batch_20260919_162605_mock_mock-v1", ("mock", "mock-v1")),
+            ("batch_20260919_014522_qwen_qwen-image-3.0", ("qwen", "qwen-image-3.0")),
+            ("batch_20261004_230000_openai_gpt-image-2.5-flare",
+             ("openai", "gpt-image-2.5-flare")),
+        ):
+            self.assertEqual(self._parse(raw), want, f"{raw} 解析错误")
+
+    def test_non_batch_names_return_empty(self) -> None:
+        """不是批次目录名（如「原始输出目录」或空）时返回空，前端据此不显示提示。"""
+        for raw in ("", "原始输出目录", "batch_broken", "batch_20260919_162605"):
+            self.assertEqual(self._parse(raw), ("", ""), f"{raw!r} 应当无法解析")
+
+    def test_model_with_dashes_and_dots_survives(self) -> None:
+        """模型名里有 `-` 和 `.` 时不能被截断（split 只切前 4 段）。"""
+        _, model = self._parse("batch_20261004_120000_qwen_qwen-image-3.0-pro")
+        self.assertEqual(model, "qwen-image-3.0-pro")
+
+    def test_state_payload_exposes_batch_provider(self) -> None:
+        """`build_state_payload()` 必须把批次的服务商带出来给前端。
+
+        没有这个字段，前端就无法判断「设置已改、但批次仍是旧的」。
+        """
+        import inspect
+
+        from app.web import server
+
+        src = inspect.getsource(server.build_state_payload)
+        self.assertIn('"provider": _batch_provider_model', src,
+                      "state payload 的 batch 段没有暴露批次服务商")
+
+
 if __name__ == "__main__":
     unittest.main()

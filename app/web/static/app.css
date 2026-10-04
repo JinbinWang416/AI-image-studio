@@ -2079,3 +2079,20 @@ body.authenticated .login-overlay { display: none; }
   font-weight: 600;
 }
 
+
+/* ---------------------------------------------------------------- 批次服务商提示
+   当前设置与「当前批次」用的服务商不一致时显示。
+   「开始/继续当前批次」用的是批次快照冻结的服务商（P1-02 / F-01），
+   所以改了设置之后旧批次不会跟着变 —— 不加提示用户会以为设置没生效。 */
+.provider-mismatch-hint {
+  margin: 8px 0 0;
+  padding: 9px 13px;
+  border-left: 3px solid #e8a33d;
+  background: #fff8e8;
+  color: #7a5312;
+  font-size: 13px;
+  line-height: 1.65;
+  border-radius: 4px;
+}
+.provider-mismatch-hint b { color: #5c3d08; }
+.provider-mismatch-hint[hidden] { display: none; }

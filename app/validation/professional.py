@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import io
 import json
+import os
 import zlib
 from datetime import datetime
 from pathlib import Path
@@ -21,11 +22,64 @@ from ..providers.base import BaseProvider, GenerateRequest
 PROFESSIONAL_VERSION = "v9-reference-decal-r3"
 CANDIDATES_PER_THEME = 3
 REPORT_NAME = "_professional_validation_report.json"
-FONT_TITLE = Path(r"C:\Windows\Fonts\msyhbd.ttc")
-FONT_BODY = Path(r"C:\Windows\Fonts\msyh.ttc")
+
+# ---------------------------------------------------------------- 中文字体
+# ⚠️ 原先硬编码 `C:\Windows\Fonts\msyh*.ttc`（Windows 微软雅黑）——
+#    那是 **Windows 专有路径**，跑在 Docker / Linux 上根本不存在，
+#    `_font()` 会直接抛「缺少中文字体」，所有需要排版中文的流程全部失败。
+#    （做 Docker 部署时才暴露出来。）
+#
+#    现在按「环境变量 → 候选列表」依次探测，取第一个真实存在的：
+#      · Windows：微软雅黑（标题用粗体 msyhbd）
+#      · Linux  ：Noto Sans CJK / 文泉驿正黑（Dockerfile 里会装 fonts-noto-cjk）
+#    也可以直接用 APP_FONT_TITLE / APP_FONT_BODY 指定任意字体文件。
+_FONT_TITLE_CANDIDATES: tuple[str, ...] = (
+    os.environ.get("APP_FONT_TITLE", ""),
+    r"C:\Windows\Fonts\msyhbd.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+)
+_FONT_BODY_CANDIDATES: tuple[str, ...] = (
+    os.environ.get("APP_FONT_BODY", ""),
+    r"C:\Windows\Fonts\msyh.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc",
+    "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+    "/usr/share/fonts/truetype/arphic/uming.ttc",
+    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+)
+
+
+def _pick_font(candidates: tuple[str, ...], label: str) -> Path:
+    """挑第一个真实存在的字体文件。
+
+    都找不到时**仍然返回首选路径**（而不是 None）—— 交给 `_font()` 去抛错，
+    这样错误信息里能带上「该装什么字体」，比一个静默的 None 有用得多。
+    """
+    for c in candidates:
+        if c and Path(c).is_file():
+            return Path(c)
+    preferred = next((c for c in candidates[1:] if c), "missing-font")
+    return Path(preferred)
+
+
+FONT_TITLE = _pick_font(_FONT_TITLE_CANDIDATES, "标题")
+FONT_BODY = _pick_font(_FONT_BODY_CANDIDATES, "正文")
+
+
 def _font(path: Path, size: int) -> ImageFont.FreeTypeFont:
     if not path.exists():
-        raise RuntimeError(f"缺少中文字体：{path}")
+        raise RuntimeError(
+            f"缺少中文字体：{path}\n"
+            "  · Windows：应存在 C:\\Windows\\Fonts\\msyh.ttc\n"
+            "  · Linux/Docker：安装 fonts-noto-cjk，"
+            "或用环境变量 APP_FONT_TITLE / APP_FONT_BODY 指定字体文件"
+        )
     return ImageFont.truetype(str(path), size=size, index=0)
 
 

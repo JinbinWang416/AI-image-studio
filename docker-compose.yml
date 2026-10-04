@@ -1,0 +1,80 @@
+# 门店贴纸图片自动生成智能体 —— Docker Compose 部署
+#
+# 用法：
+#     docker compose up -d --build      # 构建并启动
+#     docker compose logs -f            # 看日志
+#     docker compose down               # 停止（数据保留在 ./docker-data）
+#
+# 打开 http://127.0.0.1:8000 ，首次访问会引导创建管理员账号。
+
+services:
+  app:
+    build: .
+    image: store-sticker-ai:latest
+    container_name: store-sticker
+    restart: unless-stopped
+    ports:
+      # 只绑本机就写 "127.0.0.1:8000:8000"（更安全）；
+      # 要让局域网其他机器访问才用 "8000:8000"。
+      - "127.0.0.1:8000:8000"
+
+    # ---------------------------------------------------------------- 持久化
+    # ⚠️ 这四个挂载是**必须的**。没有它们，容器一重启：
+    #      config  → 管理员账号、API Key、全部设置丢失
+    #      data    → 安全存储（argon2 哈希、TOTP、会话）丢失，没人能登录
+    #      output  → 已生成的图和效果图丢失
+    #      logs    → 审计日志丢失（含 settings-writes.log）
+    volumes:
+      - ./docker-data/config:/app/config
+      - ./docker-data/data:/app/data
+      - ./docker-data/logs:/app/logs
+      - ./docker-data/output:/app/output
+
+    environment:
+      TZ: Asia/Shanghai
+      APP_PORT: "8000"
+
+      # ------------------------------------------------------------ 服务商
+      # ⚠️ 一般**不要**在这里设 PROVIDER。
+      #
+      #    配置优先级是：环境变量 > config/settings.json > 内置预设
+      #    一旦设了，网页「设置 → 模型服务」里选的服务商就会被永久压掉 ——
+      #    表现是「明明选了千问，顶栏却一直显示本地模拟 · mock-v1」。
+      #    （Render 部署时实测踩过这个坑。）
+      #
+      #    要锁定服务商（无人值守场景）才取消注释：
+      # PROVIDER: qwen
+
+      # ------------------------------------------------------------ 密钥
+      # ✅ 推荐：Key 走环境变量，不落盘、不进 settings.json。
+      #    app/config.py 的取值顺序是：
+      #        api_key = 环境变量(<该服务商 env_key>) or settings.json 里的值
+      #    所以这里配上以后，网页上不必再填 Key。
+      #
+      #    用法：在项目根建一个 .env 文件（已被 .gitignore/.dockerignore 排除），内容：
+      #        DASHSCOPE_API_KEY=sk-你的key
+      #    然后取消下面这行的注释即可。
+      # DASHSCOPE_API_KEY: ${DASHSCOPE_API_KEY}
+      #
+      # 其他服务商（变量名取自 app/providers/catalog.py 的 env_key）：
+      # OPENAI_API_KEY / GEMINI_API_KEY / ARK_API_KEY / KLING_API_KEY / ZHIPU_API_KEY
+
+      # ------------------------------------------------------------ 字体（可选）
+      # 镜像里已装 fonts-noto-cjk。要换字体就挂载字体文件并指定路径：
+      # APP_FONT_TITLE: /app/fonts/your-title.ttf
+      # APP_FONT_BODY: /app/fonts/your-body.ttf
+
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+    # ---------------------------------------------------------------- 资源限制
+    # onnxruntime + opencv 吃内存，出图时峰值不低。
+    # 机器内存小的话给个上限，避免把宿主机拖垮（超限会被 OOM 杀掉并自动重启）。
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 4G
