@@ -77,11 +77,21 @@ _ARG_DEFAULT = re.compile(
 )
 
 # 明显是占位 / 掩码 / 标记的值，不算泄露
+#
+# ⚠️ 判据是「一眼能看出是假」。真 API Key 是 `sk-` + 几十位随机串，
+#    真密码有大小写 + 符号 + 数字的组合。
+#
+#    **只加明确无歧义的测试词**。踩过的坑：曾顺手加了 `abc|abcd`，
+#    结果把 `ADMIN_PW = "abcdefgh"` 判成了占位符 —— 而这恰恰是当初
+#    旧版扫描器漏报的那个典型样本（8 位短密码）。`--selftest` 当场拦住了。
+#    所以 `abc` / `pass` / `password` / `1234` 这类**既可能是占位也可能是真值**
+#    的一律不放进来。
 _PLACEHOLDER = re.compile(
     r"""(?ix)^(
         sk-?x{4,}|x{4,}|a{8,}|\*{2,}|\.{3,}|_{3,}|-{3,}|
         your|test|demo|example|sample|placeholder|changeme|todo|fixme|
-        none|null|true|false|changeme
+        none|null|true|false|
+        mock|weak|dummy|fake|stub|foo|bar|baz
     )"""
 )
 # 纯符号/单字符（`PASS = "✅"` 这种进度标记常量）
