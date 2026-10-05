@@ -2,18 +2,37 @@
 """
 存储层：创建 23 个输出文件夹、保存图片、维护目录结构。
 
-命名规则：
-  - 默认：`01_水龙头.png`（语义清晰，便于检索）
-  - 可选：`20260918_164130_01_水龙头.png`（加时间戳前缀，TIMESTAMP_PREFIX=true）
+## 命名规则
+
+**生成图**：`JB31` + 6 位序号，如 `JB31000001.png`
+**效果图**：同一序号 + 后缀，如 `JB31000001_效果图.png`
+
+序号是**全局递增、永不重置**的（跨门店、跨批次连续），升序排列即生成顺序。
+序号与门店/主题的对应关系记在各自目录的 manifest 里。
+
+> 历史批次用的是 `01_水龙头.png` / `20260918_164130_01_水龙头.png` 这类
+> 「语义命名」，**读取路径仍兼容**（`exists()` 会一并查找），不会因为改命名
+> 就看不了旧批次。
+
+## 体积上限
+
+生成图与效果图**保存时压到 3 MB 以内**（`MAX_OUTPUT_BYTES`）。
+⚠️ PNG 是无损格式，压体积只能**降分辨率** —— 降掉的清晰度由
+`app/upscayl/` 的本地超分在印刷时补回来，所以展示体积与印刷质量不冲突。
+**印刷链路不受这个上限约束。**
 
 **后处理**：保存前会把贴纸外部的背景刷成纯白
 （模型对「白图 + 彩色背景」有固有偏好，提示词压不住，见 `app/postprocess.py`）。
 """
 from __future__ import annotations
 
+import io
 import re
+import threading
 from datetime import datetime
 from pathlib import Path
+
+from PIL import Image
 
 from ..core.logging import get_logger
 from ..core.models import Job, Store
@@ -26,6 +45,13 @@ HISTORY_DIR = "_history"
 GENERATED_DIR_SUFFIX = "生成图"
 EFFECT_DIR_SUFFIX = "效果图"
 
+# ---------------------------------------------------------------- 体积上限
+# 生成图与效果图的单文件上限。印刷链路**不受**此限制 ——
+# 压缩损失的分辨率由 `app/upscayl/` 的本地超分在印刷时补回来。
+MAX_OUTPUT_BYTES = 3 * 1024 * 1024
+# 压缩时的最小边下限：再小就没法看了，宁可超一点也保住可读性
+_MIN_EDGE = 512
+
 # Windows 文件名非法字符
 _ILLEGAL = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 
@@ -34,6 +60,75 @@ def safe_name(name: str) -> str:
     """把任意字符串转为安全的文件名片段。"""
     cleaned = _ILLEGAL.sub("_", name).strip().rstrip(".")
     return cleaned or "unnamed"
+
+
+def compress_png_to_limit(
+    data: bytes,
+    limit: int = MAX_OUTPUT_BYTES,
+    min_edge: int = _MIN_EDGE,
+) -> tuple[bytes, dict]:
+    """把 PNG 压到 ``limit`` 字节以内，返回 `(数据, 说明)`。
+
+    ⚠️ **为什么只能靠降分辨率**：PNG 是无损压缩，`optimize=True` 通常只能
+       省几个百分点；转 JPEG 虽然小得多，但白底硬边贴纸会出现**边缘噪点**，
+       印刷厂也不收有损格式。所以这里逐步等比缩小。
+
+    ⚠️ 降掉的清晰度由 Upscayl 本地超分在印刷时补回来
+       （见 `app/upscayl/`），所以**展示体积与印刷质量不冲突**。
+
+    已经是 PNG 且未超限时**原样返回**，不做任何重编码 —— 避免无谓的画质损失。
+    """
+    info: dict = {"original_bytes": len(data), "compressed": False}
+    if len(data) <= limit:
+        info["final_bytes"] = len(data)
+        return data, info
+
+    try:
+        with Image.open(io.BytesIO(data)) as im:
+            im.load()
+            img = im.copy()
+    except Exception as exc:  # noqa: BLE001 - 打不开就原样返回，交由上层决定
+        log.warning("压缩前无法读取图片，跳过压缩：%s: %s", type(exc).__name__, exc)
+        info["final_bytes"] = len(data)
+        info["error"] = type(exc).__name__
+        return data, info
+
+    best = data
+    for _ in range(12):
+        w, h = img.size
+        longest = max(w, h)
+        if longest <= min_edge:
+            break
+        # 按目标字节数比例**保守**缩小（面积比 ≈ 字节比），每轮至少缩 5%
+        ratio = max(0.05, min(0.9, (limit / max(1, len(best))) ** 0.5))
+        new_long = max(min_edge, int(longest * ratio))
+        if new_long >= longest:
+            new_long = max(min_edge, longest - max(1, longest // 20))
+        scale = new_long / longest
+        img = img.resize((max(1, int(w * scale)), max(1, int(h * scale))), Image.LANCZOS)
+
+        buf = io.BytesIO()
+        # RGBA 才带 alpha；其它模式按原模式存（P 模式转 RGBA 更安全）
+        if img.mode == "P":
+            img = img.convert("RGBA")
+        img.save(buf, format="PNG", optimize=True)
+        best = buf.getvalue()
+        info["final_pixels"] = list(img.size)
+        if len(best) <= limit:
+            break
+
+    info["compressed"] = True
+    info["final_bytes"] = len(best)
+    info["final_pixels"] = list(img.size)
+    if len(best) > limit:
+        # 到下限还超：如实记录，不静默装作成功
+        info["over_limit"] = True
+        log.warning("已缩到最小边长 %d 仍超过 %d 字节（实际 %d）",
+                    min_edge, limit, len(best))
+    else:
+        log.info("生成图已压缩：%.2f MB → %.2f MB（%dx%d）",
+                 len(data) / 1024 / 1024, len(best) / 1024 / 1024, *img.size)
+    return best, info
 
 
 class Storage:
@@ -137,7 +232,7 @@ class Storage:
         stamp: datetime | None = None,
         version_tag: str = "",
     ) -> Path:
-        """保存图片二进制（含背景刷白后处理 + 旧版本归档）。
+        """保存图片二进制（背景刷白 → 体积压缩 → 旧版本归档）。
 
         Args:
             version_tag: 归档标签，通常为 `{提示词版本}_{模型}`，便于事后对比
@@ -148,6 +243,10 @@ class Storage:
                 data = whiten_background(data, self.whiten_threshold)
             except Exception:                     # 后处理失败不影响主流程
                 log.warning("背景刷白失败，保存原图：%s", job.file_name)
+
+        # 体积上限（生成图 ≤ 3MB）。⚠️ 降掉的清晰度由 Upscayl 超分在印刷时补回。
+        data, up_info = compress_png_to_limit(data, MAX_OUTPUT_BYTES)
+        job.runtime_metrics["output_size"] = up_info
 
         path = self.target_path(job, stamp)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -220,6 +319,9 @@ class Storage:
         """保存玻璃门店效果图，并在同目录保留旧效果图历史。"""
         path = self.effect_target_path(job, source_path)
         path.parent.mkdir(parents=True, exist_ok=True)
+        # 体积上限（效果图同样 ≤ 3MB）；压缩失败就存原图，不阻断合成
+        data, info = compress_png_to_limit(data, MAX_OUTPUT_BYTES)
+        job.runtime_metrics["effect_size"] = info
         self.archive_existing(path, version_tag)
         tmp = path.with_suffix(path.suffix + ".tmp")
         tmp.write_bytes(data)
