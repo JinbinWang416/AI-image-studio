@@ -329,6 +329,14 @@ class PrintConfig:
     max_pixels: int = 8000
     keep_work: bool = True
     auto_clean_work: bool = False
+    # ---- 交付精简（H-2003E 这类 UV 打印机用 Caldera RIP，只吃需要的层）----
+    #
+    # ⚠️ `_白墨.tif` **不要关** —— UV 打印在透明介质（玻璃贴纸）上必须先用白墨
+    #    打底，否则颜色是透明的、贴上去看不见。
+    #    同理 `_刀模.tif` 关了就没法模切。
+    #    这两个是**交付必需**，下面两个才是可省的：
+    keep_merged_preview: bool = False         # `<门店>_合并预览.tif`（仅供人工核对）
+    keep_preview_jpg: bool = False            # `预览/*.jpg` 缩略图（同上）
 
 
 @dataclass

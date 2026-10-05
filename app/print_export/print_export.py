@@ -464,41 +464,58 @@ class PrintExporter:
             return self._fail(result, mf, ErrorCode.UNKNOWN,
                               f"CMYK 转换失败：{type(exc).__name__}", t0)
 
-        # ---- ⑥ 合并预览 TIF + JPEG 缩略图 ----
+        # ---- ⑥ 合并预览 TIF + JPEG 缩略图（**可关闭**）----
         #
         # ⚡ 性能优化：合并预览只用于**人工核对**，不需要印刷分辨率。
         #    7087px 的三层合并要 ~5 秒（LZW 压缩大头），缩到 2000px 后 <1 秒。
         #    彩色层与各图层仍保持完整分辨率，不受影响。
-        merged_path = print_dir / f"{name}_合并预览.tif"
-        try:
-            preview_edge = min(int(getattr(self.cfg, "print_preview_px", 2000) or 2000),
-                               max(target_w, target_h))
-            ratio = preview_edge / max(1, max(target_w, target_h))
-            mw, mh = max(1, round(target_w * ratio)), max(1, round(target_h * ratio))
+        #
+        # ⚠️ 交付给印刷厂时这两个都**没用**（H-2003E + Caldera RIP 只吃
+        #    CMYK / 白墨 / 刀模三层），默认关闭。想人工核对时再打开。
+        #
+        #    读的是**子配置**（`cfg.print.keep_*`）而不是扁平属性：
+        #    `FLAT_TO_GROUP` 是「旧字段名 → 子配置」的兼容映射，只登记旧字段；
+        #    新字段直接用子配置，否则 `getattr` 永远拿不到值（想开也开不了）。
+        #
+        # ⚠️ 注意**不要**顺手把 `white_ink` / `dieline` 也关掉 ——
+        #    UV 打印在透明介质上必须白墨打底，刀模是模切必需的。
+        print_cfg = getattr(self.cfg, "print", None)
+        merged_path: Path | None = None
+        if getattr(print_cfg, "keep_merged_preview", False):
+            merged_path = print_dir / f"{name}_合并预览.tif"
+            try:
+                preview_edge = min(int(getattr(self.cfg, "print_preview_px", 2000) or 2000),
+                                   max(target_w, target_h))
+                ratio = preview_edge / max(1, max(target_w, target_h))
+                mw, mh = max(1, round(target_w * ratio)), max(1, round(target_h * ratio))
 
-            merged = make_merged_preview(
-                cmyk_img,
-                white if getattr(self.cfg, "print_white_ink", True) else None,
-                Image.open(dieline_path) if dieline_path.is_file() else None,
-                size=(target_w, target_h),
-            )
-            if (mw, mh) != (target_w, target_h):
-                merged = merged.resize((mw, mh), Image.LANCZOS)
-            merged.save(merged_path, format="TIFF", compression=TIFF_COMPRESSION)
-            mf.layers["merged_preview"] = merged_path.name
-            mf.options["merged_preview_px"] = [mw, mh]
-        except Exception as exc:  # noqa: BLE001
-            mf.warnings.append(f"合并预览生成失败：{type(exc).__name__}")
+                merged = make_merged_preview(
+                    cmyk_img,
+                    white if getattr(self.cfg, "print_white_ink", True) else None,
+                    Image.open(dieline_path) if dieline_path.is_file() else None,
+                    size=(target_w, target_h),
+                )
+                if (mw, mh) != (target_w, target_h):
+                    merged = merged.resize((mw, mh), Image.LANCZOS)
+                merged.save(merged_path, format="TIFF", compression=TIFF_COMPRESSION)
+                mf.layers["merged_preview"] = merged_path.name
+                mf.options["merged_preview_px"] = [mw, mh]
+            except Exception as exc:  # noqa: BLE001
+                mf.warnings.append(f"合并预览生成失败：{type(exc).__name__}")
+                merged_path = None
 
-        preview_path = preview_dir / f"{name}_预览.jpg"
-        try:
-            jpg = make_jpeg_preview(cmyk_img)
-            jpg.save(preview_path, format="JPEG", quality=85, optimize=True)
-            mf.layers["preview_jpeg"] = str(
-                preview_path.relative_to(store_dir).as_posix()
-            )
-        except Exception as exc:  # noqa: BLE001
-            mf.warnings.append(f"JPEG 预览生成失败：{type(exc).__name__}")
+        preview_path: Path | None = None
+        if getattr(print_cfg, "keep_preview_jpg", False):
+            preview_path = preview_dir / f"{name}_预览.jpg"
+            try:
+                jpg = make_jpeg_preview(cmyk_img)
+                jpg.save(preview_path, format="JPEG", quality=85, optimize=True)
+                mf.layers["preview_jpeg"] = str(
+                    preview_path.relative_to(store_dir).as_posix()
+                )
+            except Exception as exc:  # noqa: BLE001
+                mf.warnings.append(f"JPEG 预览生成失败：{type(exc).__name__}")
+                preview_path = None
 
         # ---- ⑦ manifest ----
         mf.status = "success"
@@ -513,11 +530,18 @@ class PrintExporter:
         # ⚠️ 只列**本次产出**的文件，不能 `iterdir()` 整个目录 ——
         #    一个门店有 6 张图，共享同一个 印刷TIF/ 目录，
         #    列全目录会让"重跑一次"的文件数越滚越多（实测 5 → 25）。
-        produced = [
-            cmyk_path, white_path, dieline_path, merged_path,
-            print_dir / "print_manifest.json",
-        ]
-        result.files = [p.name for p in produced if p.is_file()]
+        #
+        # ⚠️ 交付给印刷厂的是 **CMYK + 白墨 + 刀模** 三层：
+        #      · CMYK —— 印刷主文件
+        #      · 白墨 —— UV 打印在透明介质（玻璃贴纸）上必须打底，
+        #                少了它颜色是透明的、贴上去看不见
+        #      · 刀模 —— 模切轮廓
+        #    合并预览与 JPEG 缩略图默认不生成（见 ⑥），所以这里可能为 None。
+        produced = [cmyk_path, white_path, dieline_path]
+        if merged_path is not None:
+            produced.append(merged_path)
+        produced.append(print_dir / "print_manifest.json")
+        result.files = [p.name for p in produced if p is not None and p.is_file()]
         result.elapsed = time.monotonic() - t0
         log.info("印刷导出完成：%s（%d 个文件，%.1fs，去背=%s）",
                  name, len(result.files), result.elapsed, mf.options.get("cutout", "?"))

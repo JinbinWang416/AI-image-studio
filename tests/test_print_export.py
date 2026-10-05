@@ -84,8 +84,17 @@ class PrintExportBase(unittest.TestCase):
         self._tmp.cleanup()
 
     def export(self, **overrides):
+        """导出。
+
+        ⚠️ `keep_*` 这类**新配置**在子配置里（`cfg.print.keep_preview_jpg`），
+           不在扁平兼容层 —— 扁平层只登记旧字段名。
+           所以这里对 `keep_` 开头的键写进子配置，其余仍走旧式扁平属性。
+        """
         for k, v in overrides.items():
-            setattr(self.cfg, k, v)
+            if k.startswith("keep_") and hasattr(self.cfg.print, k):
+                setattr(self.cfg.print, k, v)
+            else:
+                setattr(self.cfg, k, v)
         exporter = PrintExporter(self.cfg)
         return exporter.export_store(self.store_dir, self.png, store_name="01_测试门店_01")
 
@@ -97,14 +106,26 @@ class TestOutputs(PrintExportBase):
     """1 / 2 / 4 / 5：产出的文件与图层模式。"""
 
     def test_four_tifs_and_manifest_exist(self) -> None:
-        """需求 1：4 个 TIF + manifest 都存在。"""
+        """需求 1：交付层（CMYK / 白墨 / 刀模）+ manifest 都存在。
+
+        ⚠️ 「合并预览」**默认不生成** —— 印刷厂（H-2003E + Caldera RIP）
+           只吃这三层，预览是给人看的，留着只会让交付目录变乱。
+           想人工核对时把 `print_keep_merged_preview` 打开即可。
+
+        ⚠️ 白墨层**必须留着**：UV 打印在透明介质（玻璃贴纸）上要靠它打底，
+           删了颜色就是透明的，贴上去看不见。
+        """
         res = self.export()
         self.assertTrue(res.ok, f"导出失败：{res.error_code} {res.error_message}")
         d = self.print_dir()
-        for suffix in ("_CMYK.tif", "_白墨.tif", "_刀模.tif", "_合并预览.tif"):
+        for suffix in ("_CMYK.tif", "_白墨.tif", "_刀模.tif"):
             f = d / f"01_测试门店_01{suffix}"
             self.assertTrue(f.is_file(), f"缺少 {f.name}")
         self.assertTrue((d / "print_manifest.json").is_file(), "缺少 print_manifest.json")
+        self.assertFalse(
+            (d / "01_测试门店_01_合并预览.tif").exists(),
+            "默认不应生成合并预览（交付精简）",
+        )
 
     def test_cmyk_mode(self) -> None:
         """需求 2：彩色层必须是 CMYK 模式。"""
@@ -117,7 +138,7 @@ class TestOutputs(PrintExportBase):
         self.export()
         d = self.print_dir()
         sizes = []
-        for suffix in ("_CMYK.tif", "_白墨.tif", "_刀模.tif", "_合并预览.tif"):
+        for suffix in ("_CMYK.tif", "_白墨.tif", "_刀模.tif"):
             with Image.open(d / f"01_测试门店_01{suffix}") as im:
                 sizes.append((suffix, im.size))
         first = sizes[0][1]
@@ -149,8 +170,13 @@ class TestOutputs(PrintExportBase):
             self.assertEqual(corner, 255, "invert 模式下透明区应为全白（印满版白墨）")
 
     def test_preview_jpeg_max_edge(self) -> None:
-        """需求 5：预览 JPEG 最长边 ≤ 1200px。"""
-        self.export()
+        """需求 5：预览 JPEG 最长边 ≤ 1200px。
+
+        ⚠️ 预览默认**不生成**（交付精简），所以这里要显式开启 ——
+           顺带验证「开关确实能开」（之前扁平属性没登记映射，
+           `getattr` 永远返回 False，想开也开不了，属于真 bug）。
+        """
+        self.export(keep_preview_jpg=True)
         p = self.store_dir / PREVIEW_DIR_NAME / "01_测试门店_01_预览.jpg"
         self.assertTrue(p.is_file(), "预览 JPEG 未生成")
         with Image.open(p) as im:
