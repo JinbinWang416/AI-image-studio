@@ -73,8 +73,14 @@ def process_store(cfg, store_dir: pathlib.Path, dry: bool) -> tuple[int, int]:
     gen_dir = store_dir / f"{store_dir.name}{GEN_SUFFIX}"
     eff_dir = store_dir / f"{store_dir.name}{EFFECT_SUFFIX}"
     manifest_path = store_dir / "_manifest.json"
-    if not gen_dir.is_dir() or not manifest_path.is_file():
-        print(f"  跳过 {store_dir.name}（缺生成图或清单）")
+    # ⚠️ 兼容**两种目录结构**：
+    #      · 新结构：`<门店>/<门店>生成图/`
+    #      · 旧结构：生成图直接放在 `<门店>/` 根目录（09-19 那批全是这样）
+    #    只认新结构的话，22 个老门店会被整体跳过 —— 表现为「只刷新了 1 个门店」。
+    if not gen_dir.is_dir():
+        gen_dir = store_dir
+    if not manifest_path.is_file():
+        print(f"  跳过 {store_dir.name}（缺清单）")
         return 0, 0
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -92,11 +98,34 @@ def process_store(cfg, store_dir: pathlib.Path, dry: bool) -> tuple[int, int]:
     eff_dir.mkdir(parents=True, exist_ok=True)
     done = failed = 0
     for key, entry in entries.items():
-        if entry.get("status") != "success":
+        # ⚠️ 不能只认顶层的 `status`。
+        #
+        #    架构版重构后 manifest 的 entry 里**没有** `status` 字段
+        #    （成功/失败记在 `runtime_metrics.effect_image.status` 里），
+        #    于是 `entry.get("status") != "success"` 把**所有条目**都跳过了 ——
+        #    现象就是「清单已更新」但「刷新 0 张」，一张也没刷。
+        #
+        #    改成：顶层有 status 才拿它判断；没有就看生成图在不在。
+        status = entry.get("status")
+        if status is not None and status != "success":
             continue
         src = pathlib.Path(entry.get("image_path") or "")
         if not src.is_file():
             src = gen_dir / str(entry.get("file_name") or "")
+        if not src.is_file():
+            # ⚠️ 架构版的 manifest **极简**：`entry` 里只有 `runtime_metrics`，
+            #    既没有 `image_path` 也没有 `file_name`（重构时精简掉了）。
+            #    所以退回**按 pic_index 在生成图目录里找** ——
+            #    命名格式是 `{时间戳}_{pic_index}_{主题}.png`。
+            #
+            #    排除 `_效果图`（那是产物）与 `_up`（那是超分放大版），
+            #    优先取没有这两个后缀的原图。
+            cands = sorted(
+                p for p in gen_dir.glob(f"*_{key}_*.png")
+                if "_效果图" not in p.name and "_up" not in p.stem
+            )
+            if cands:
+                src = cands[0]
         if not src.is_file():
             print(f"    ✗ {key} 找不到生成图")
             failed += 1
@@ -160,7 +189,10 @@ def main() -> int:
 
     stores = [
         d for d in sorted(batch.iterdir())
-        if d.is_dir() and (d / f"{d.name}{GEN_SUFFIX}").is_dir()
+        # ⚠️ 同样要兼容旧结构：有些门店没有「生成图」子目录，
+        #    生成图就在门店根目录 —— 只按子目录过滤会漏掉它们。
+        if d.is_dir()
+        and ((d / f"{d.name}{GEN_SUFFIX}").is_dir() or any(d.glob("*.png")))
         and (not args.store or d.name.startswith(args.store))
     ]
     if not stores:
