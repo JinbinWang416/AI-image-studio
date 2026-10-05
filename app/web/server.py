@@ -57,6 +57,7 @@ from ..state.manifest_store import ManifestStore
 from ..generation.orchestrator import Orchestrator
 from ..providers import GenerateRequest, ProviderError, create_provider
 from ..providers.catalog import PROVIDER_CATALOG
+from .scheduler import ScheduleManager, ScheduleJob
 from ..core.paths import PACKAGE_ROOT
 from ..prompt.profiles import DEFAULT_QUALITY_TEMPLATE, PromptProfileError, validate_template
 from ..state.assets import EffectBackgroundStore, ReferenceAssetError, ReferenceAssetStore, validate_mode_assets
@@ -361,6 +362,9 @@ class AppState:
 
 
 STATE = AppState()
+
+# 定时生图调度器（单例，进程级常驻）。任务持久化到 STATE_ROOT/schedules.json。
+scheduler = ScheduleManager()
 
 
 # ---------------------------------------------------------------- 日志桥
@@ -804,6 +808,9 @@ def build_state_payload(cfg=None) -> dict:
             "image_mode": ((batch_snapshot.get("image_workflow") or {}).get("mode") or cfg.image_mode),
             "realism_iteration": current_realism,
             "effect_background": _effect_background_public(current_effect_asset),
+            # Upscayl 本地超分配置 + 模型清单（前端据此动态填下拉，
+            # 免得加模型还要改前端）
+            "upscayl": _upscayl_state(cfg),
         },
         "providers": _providers_summary(),
         "progress": {
@@ -1116,6 +1123,85 @@ async def _start_full_run(
         "scope": {"store_indexes": run_scope, "image_count": len(run_scope) * 6},
         "resumed_after_recharge": resumed_after_recharge,
     })
+
+
+# ============================================================ 定时生图
+async def _fire_scheduled(job: "ScheduleJob") -> None:
+    """到点回调：若当前空闲则启动一个新批次（B2：每次出全新图）。
+
+    · 运行中去重跳过（D1）：``STATE.running`` 时跳过并记录，不排队、不报错。
+    · 复用 ``_start_full_run``，其内部用 ``asyncio.create_task`` 立即返回，
+      因此本回调不会被整批生成阻塞。
+    """
+    if STATE.running:
+        job.last_result = "skipped:running"
+        return
+    try:
+        payload: dict = {}
+        if getattr(job, "provider", ""):
+            payload["provider"] = job.provider
+        await _start_full_run(payload, create_new_batch=True)
+        job.last_result = "launched"
+    except HTTPException as exc:
+        job.last_result = f"error:{exc.status_code}"
+    except Exception as exc:  # noqa: BLE001
+        job.last_result = f"error:{type(exc).__name__}"
+
+
+scheduler.on_fire = _fire_scheduled
+
+
+@app.on_event("startup")
+async def _start_scheduler() -> None:
+    """启动常驻调度循环（每 10 秒检查到期任务）。"""
+    asyncio.create_task(scheduler.start())
+
+
+@app.get("/api/schedules")
+async def api_list_schedules() -> JSONResponse:
+    """列出所有定时任务。"""
+    return JSONResponse([j.to_dict() for j in scheduler.list_jobs()])
+
+
+@app.post("/api/schedules")
+async def api_create_schedule(request: Request) -> JSONResponse:
+    """创建定时任务（单次 / 循环）。"""
+    body = await request.json()
+    mode = str(body.get("mode", "once"))
+    if mode not in ("once", "interval"):
+        raise HTTPException(status_code=400, detail="mode 必须是 once 或 interval")
+    job = ScheduleJob(
+        name=str(body.get("name", "") or ""),
+        mode=mode,
+        provider=str(body.get("provider", "") or ""),
+        run_at=str(body.get("run_at", "") or ""),
+        unit=str(body.get("unit", "day") or "day"),
+        every=int(body.get("every", 1) or 1),
+        at=str(body.get("at", "") or ""),
+        enabled=bool(body.get("enabled", True)),
+    )
+    if mode == "once":
+        try:
+            datetime.fromisoformat(job.run_at)
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="单次任务需要有效的 run_at（ISO 时间，如 2026-09-19T15:30:00）",
+            )
+    else:
+        if job.unit not in ("minute", "hour", "day"):
+            raise HTTPException(status_code=400, detail="循环单位必须是 minute / hour / day")
+        if job.every < 1:
+            raise HTTPException(status_code=400, detail="循环间隔必须 ≥ 1")
+    scheduler.add(job)
+    return JSONResponse({"ok": True, "job": job.to_dict()})
+
+
+@app.delete("/api/schedules/{job_id}")
+async def api_delete_schedule(job_id: str) -> JSONResponse:
+    """删除一条定时任务。"""
+    removed = scheduler.remove(job_id)
+    return JSONResponse({"ok": bool(removed)})
 
 
 @app.post("/api/run")
@@ -1866,6 +1952,8 @@ _SETTINGS_FIELD_PERMISSION: dict[str, str] = {
     "scope": "prompt.template.manage",
     "image_workflow": "prompt.template.manage",
     "print": "prompt.template.manage",
+    # Upscayl 本地超分：影响印刷与生成图产出，属设计类变更
+    "upscayl": "prompt.template.manage",
 }
 # 未列出的字段（含以后新增的）落到最严的一档 ——
 # 宁可让新字段默认「只有 admin 能改」，也不要默认放行。
@@ -1912,6 +2000,112 @@ def _require_settings_permissions(user: "User", payload: dict) -> None:
     )
 
 
+def _upscayl_state(cfg) -> dict:
+    """把 Upscayl 配置与模型清单给前端（设置页据此渲染）。
+
+    带上完整模型清单而不是只给当前值 —— 前端下拉是**动态填充**的，
+    以后在 `app/upscayl/models.py` 里加模型不用再改前端。
+    """
+    from ..upscayl import UPSCAYL_MODELS
+
+    u = getattr(cfg, "upscayl", None)
+    return {
+        "enabled": bool(getattr(u, "enabled", False)),
+        "binary_path": str(getattr(u, "binary_path", "") or ""),
+        "model_generated": str(getattr(u, "model_generated", "") or ""),
+        "model_print": str(getattr(u, "model_print", "") or ""),
+        "scale": int(getattr(u, "scale", 4) or 4),
+        "tile": int(getattr(u, "tile", 128) or 128),
+        "upscale_generated": bool(getattr(u, "upscale_generated", False)),
+        "upscale_print": bool(getattr(u, "upscale_print", False)),
+        "models": [
+            {"name": m.name, "label": m.label, "scales": list(m.scales), "blurb": m.blurb}
+            for m in UPSCAYL_MODELS.values()
+        ],
+    }
+
+
+def _validate_upscayl_payload(block: object) -> None:
+    """校验设置里提交的 `upscayl` 块，非法就 400。
+
+    ⚠️ 这里挡的是**会静默产出坏图**的取值，不只是"看起来不合理"的：
+
+    - `tile` 为 0 → CLI 的 auto tile **输出尺寸正常但全黑**，
+      一路流到印刷才会发现。必须在入口挡掉。
+    - `model` 不在清单里 → CLI 会报错，但那是在批次跑到一半的时候。
+    - `scale` 不在 {2,3,4} → CLI 只认这三个整数倍。
+    - `scale` 与所选模型的 `scales` 不匹配 → 同样会在中途失败。
+
+    Raises:
+        HTTPException 400
+    """
+    if block is None:
+        return
+    if not isinstance(block, dict):
+        raise HTTPException(status_code=400, detail="upscayl 配置必须是对象")
+
+    from ..upscayl import ALLOWED_SCALES, MIN_TILE, UPSCAYL_MODELS
+
+    def _bad(msg: str) -> HTTPException:
+        return HTTPException(status_code=400, detail=f"Upscayl 配置无效：{msg}")
+
+    tile = block.get("tile", None)
+    if tile is not None:
+        try:
+            tile_i = int(tile)
+        except (TypeError, ValueError):
+            raise _bad("tile 必须是整数") from None
+        if tile_i == 0:
+            raise _bad(
+                "tile 不能为 0 —— CLI 的 auto tile 会输出**全黑**图"
+                f"（尺寸正常，很难发现）。请用 ≥{MIN_TILE}，推荐 128。"
+            )
+        if tile_i < MIN_TILE:
+            raise _bad(f"tile 太小（{tile_i}），最少 {MIN_TILE}，推荐 128")
+
+    scale = block.get("scale", None)
+    if scale is not None:
+        try:
+            scale_i = int(scale)
+        except (TypeError, ValueError):
+            raise _bad("scale 必须是整数") from None
+        if scale_i not in ALLOWED_SCALES:
+            raise _bad(f"scale 只支持 {ALLOWED_SCALES}，收到 {scale_i}")
+
+    for field in ("model_generated", "model_print"):
+        name = block.get(field, None)
+        if name in (None, ""):
+            continue
+        model = UPSCAYL_MODELS.get(str(name))
+        if model is None:
+            raise _bad(f"{field} 未知模型 {name!r}，可选：{', '.join(sorted(UPSCAYL_MODELS))}")
+        if scale is not None and int(scale) not in model.scales:
+            raise _bad(
+                f"{field}={name} 只支持 {model.scales} 倍，与 scale={scale} 不匹配"
+            )
+
+
+@app.post("/api/upscayl/test")
+async def api_upscayl_test(
+    user: "User" = Depends(require_permission("prompt.template.manage")),
+) -> JSONResponse:
+    """真跑一次小图超分，验证二进制与 Vulkan 是否可用（本地免费，不花钱）。
+
+    ⚠️ 与「测试连接」不同，这个是**真的执行 CLI** —— 缺 Vulkan 驱动、
+       显存不足、模型缺失都会在这里暴露，而不是等批次跑到一半。
+    """
+    from ..upscayl import UpscaylEngine
+
+    engine = UpscaylEngine(binary=str(getattr(load_config().upscayl, "binary_path", "") or ""))
+    ok, message = await asyncio.to_thread(engine.selftest)
+    return JSONResponse({
+        "ok": ok,
+        "message": message,
+        "binary": str(engine.binary or ""),
+        "models_dir": str(engine.models_dir or ""),
+    })
+
+
 @app.post("/api/settings")
 async def api_save_settings(
     payload: dict | None = None,
@@ -1925,6 +2119,7 @@ async def api_save_settings(
     """
     payload = payload or {}
     _require_settings_permissions(user, payload)
+    _validate_upscayl_payload(payload.get("upscayl"))
     generation = payload.get("generation")
     if isinstance(generation, dict) and "size" in generation:
         generation["size"] = _normalise_size(generation.get("size"))

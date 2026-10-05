@@ -414,6 +414,8 @@
         try { STATE = await api('/api/state'); } catch (_) { /* 忽略，保持空白 */ }
       }
       fillForm();
+      // Upscayl 测试按钮：每次打开设置时绑定一次（onclick 覆盖式赋值，不会重复叠加）
+      if ($('s-upscayl-test')) $('s-upscayl-test').onclick = testUpscayl;
       selectSettingsPane('model');
       renderScope();
       renderQualityWorkspace();
@@ -757,7 +759,13 @@
         renderEffectBackgroundAssets();
         renderFileSummary();
         note.className = 'snote ok';
-        note.textContent = `✅ 已生成 ${d.saved} 张 AI 背景并自动选中（标记为「AI 生成 · 非实拍」）`;
+        const a0 = (d.assets || [])[0] || {};
+        const extra = [];
+        if (a0.variation) extra.push(`机位：${a0.variation}`);
+        if (a0.realism_level) extra.push(`真实感 V${a0.realism_level}`);
+        if (a0.round) extra.push(`第 ${a0.round} 轮`);
+        const tail = extra.length ? `（${extra.join(' · ')}，与上一张不重样）` : '';
+        note.textContent = `✅ 已生成 ${d.saved} 张 AI 背景并自动选中${tail}（标记为「AI 生成 · 非实拍」，可再次生成以获得更真实的版本）`;
       } else {
         note.className = 'snote err';
         note.textContent = '❌ ' + ((d.errors || [])[0] || '未生成任何背景');
@@ -849,7 +857,7 @@
   function renderProviderCards() {
     const wrap = $('provider-cards');
     const active = SETTINGS.active_provider;
-    const order = ['openai', 'qwen', 'gemini', 'seedream', 'kling', 'zhipu', 'flux_local', 'custom', 'mock'];
+    const order = ['openai', 'qwen', 'gemini', 'seedream', 'aihive', 'kling', 'zhipu', 'flux_local', 'custom', 'mock'];
 
     wrap.innerHTML = order.filter((n) => CATALOG[n]).map((name) => {
       const cat = CATALOG[name];
@@ -1039,6 +1047,19 @@
     $('s-deepseek-url').value = optimizer.base_url || 'https://api.deepseek.com';
     $('s-deepseek-model').value = optimizer.model || 'deepseek-flash';
 
+    // ---- Upscayl 本地超分 ----
+    // ⚠️ 模型下拉是**动态填充**的（清单在后端 app/upscayl/models.py 里维护），
+    //    这样加模型不用改前端；同时把实测不可用的模型标出来 ——
+    //    实测 realesr-animevideov3-x2 会输出平铺伪影，很容易被误选。
+    const up = (STATE && STATE.config && STATE.config.upscayl) || {};
+    fillUpscaylModels(up);
+    if ($('s-upscayl-enabled')) $('s-upscayl-enabled').checked = !!up.enabled;
+    if ($('s-upscayl-binary')) $('s-upscayl-binary').value = up.binary_path || '';
+    if ($('s-upscayl-scale')) $('s-upscayl-scale').value = String(up.scale || 4);
+    if ($('s-upscayl-tile')) $('s-upscayl-tile').value = String(up.tile || 128);
+    if ($('s-upscayl-generated')) $('s-upscayl-generated').checked = !!up.upscale_generated;
+    if ($('s-upscayl-print')) $('s-upscayl-print').checked = !!up.upscale_print;
+
     updateConcurrencyNote();
     $('s-output').placeholder = (STATE && STATE.config.output_root) || '';
   }
@@ -1136,7 +1157,60 @@
         white_ink: $('s-print-white') ? $('s-print-white').checked : true,
         dieline: $('s-print-dieline') ? $('s-print-dieline').checked : true,
       },
+      upscayl: {
+        enabled: $('s-upscayl-enabled') ? $('s-upscayl-enabled').checked : false,
+        binary_path: ($('s-upscayl-binary') || {}).value?.trim() || '',
+        model_generated: ($('s-upscayl-model-generated') || {}).value || 'realesr-animevideov3-x4',
+        model_print: ($('s-upscayl-model-print') || {}).value || 'realesrgan-x4plus',
+        // ⚠️ tile 传 0 会让 CLI 输出**全黑**图（尺寸正常，很难发现）——
+        //    后端 `_validate_upscayl_payload` 会兜底拒绝，这里先做一次。
+        scale: parseInt(($('s-upscayl-scale') || {}).value, 10) || 4,
+        tile: Math.max(32, parseInt(($('s-upscayl-tile') || {}).value, 10) || 128),
+        upscale_generated: $('s-upscayl-generated') ? $('s-upscayl-generated').checked : false,
+        upscale_print: $('s-upscayl-print') ? $('s-upscayl-print').checked : false,
+      },
     };
+  }
+
+  // 模型清单（从 /api/state 的 config.upscayl 里带过来；拿不到就用兜底常量）
+  const UPSCAYL_FALLBACK = [
+    { name: 'realesr-animevideov3-x4', label: 'Real-ESRGAN AnimeVideo v3 ×4', scales: [4], blurb: '动漫/插画向，4 倍。实测最佳。' },
+    { name: 'realesrgan-x4plus', label: 'Real-ESRGAN x4plus', scales: [4], blurb: '通用照片向，4 倍。印刷默认。' },
+    { name: 'realesrgan-x4plus-anime', label: 'Real-ESRGAN x4plus Anime', scales: [4], blurb: '动漫向 x4plus 变体。' },
+    { name: 'realesr-animevideov3-x2', label: 'AnimeVideo v3 ×2', scales: [2], blurb: '⚠️ 实测输出有此起彼伏的平铺伪影（SSIM 0.57），不要选。' },
+  ];
+
+  function fillUpscaylModels(up) {
+    const list = (up && Array.isArray(up.models) && up.models.length) ? up.models : UPSCAYL_FALLBACK;
+    for (const [id, key] of [['s-upscayl-model-generated', 'model_generated'],
+                             ['s-upscayl-model-print', 'model_print']]) {
+      const sel = $(id);
+      if (!sel) continue;
+      const cur = (up && up[key]) || '';
+      sel.innerHTML = list.map((m) =>
+        `<option value="${esc(m.name)}">${esc(m.label || m.name)}</option>`).join('');
+      if (cur) sel.value = cur;
+      if (!sel.value && list.length) sel.value = list[0].name;
+    }
+  }
+
+  async function testUpscayl() {
+    const out = $('s-upscayl-test-result');
+    const btn = $('s-upscayl-test');
+    if (!out || !btn) return;
+    btn.disabled = true;
+    out.className = 'snote';
+    out.textContent = '正在真跑一次本地超分…（首次加载模型可能要十几秒）';
+    try {
+      const d = await api('/api/upscayl/test', { method: 'POST' });
+      out.className = d.ok ? 'snote ok' : 'snote warn';
+      out.textContent = `${d.ok ? '✅' : '⚠️'} ${d.message || ''}`;
+    } catch (e) {
+      out.className = 'snote warn';
+      out.textContent = `⚠️ 测试失败：${e.message || e}`;
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   async function saveSettings() {
@@ -2121,11 +2195,136 @@
     }
   }
 
+  // ============================================================ 定时生图
+  let scheduleCatalog = {};
+  async function loadScheduleCatalog() {
+    try {
+      scheduleCatalog = await api('/api/catalog');
+    } catch (e) {
+      scheduleCatalog = {};
+    }
+  }
+  function fillScheduleProvider() {
+    const sel = $('sched-provider');
+    sel.innerHTML = '<option value="">当前活动服务商</option>';
+    for (const [name, meta] of Object.entries(scheduleCatalog)) {
+      const o = document.createElement('option');
+      o.value = name;
+      o.textContent = (meta && meta.label) || name;
+      sel.appendChild(o);
+    }
+  }
+  function syncSchedFields() {
+    const mode = document.querySelector('input[name="sched-mode"]:checked').value;
+    $('sched-once-field').hidden = mode !== 'once';
+    $('sched-interval-field').hidden = mode !== 'interval';
+    const isDay = mode === 'interval' && $('sched-unit').value === 'day';
+    $('sched-at-field').hidden = !isDay;
+  }
+  function openScheduleModal() {
+    $('schedule-modal').classList.add('show');
+    $('schedule-modal').setAttribute('aria-hidden', 'false');
+    // 默认触发时间 = 现在 + 5 分钟（截断到分钟）
+    const d = new Date(Date.now() + 5 * 60000);
+    d.setSeconds(0, 0);
+    const pad = (n) => String(n).padStart(2, '0');
+    $('sched-run-at').value =
+      `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+    if (Object.keys(scheduleCatalog).length) fillScheduleProvider();
+    else loadScheduleCatalog().then(fillScheduleProvider);
+    syncSchedFields();
+    loadSchedules();
+  }
+  function closeScheduleModal() {
+    $('schedule-modal').classList.remove('show');
+    $('schedule-modal').setAttribute('aria-hidden', 'true');
+  }
+  async function loadSchedules() {
+    try {
+      const list = await api('/api/schedules');
+      const box = $('schedule-list');
+      box.innerHTML = '';
+      if (!list.length) {
+        box.innerHTML = '<p class="snote">暂无定时任务。</p>';
+        return;
+      }
+      const unitText = { minute: '分钟', hour: '小时', day: '天' };
+      for (const j of list) {
+        const row = document.createElement('div');
+        row.className = 'sched-row';
+        row.style.cssText = 'display:flex;justify-content:space-between;align-items:center;gap:12px;padding:8px 10px;border:1px solid #ddd;border-radius:8px;margin:6px 0';
+        const mode = j.mode === 'once'
+          ? `单次 · ${j.run_at || '?'}`
+          : `循环 · 每${j.every}${unitText[j.unit] || j.unit}${j.at ? ' @ ' + j.at : ''}`;
+        const next = j.mode === 'once' ? (j.run_at || '-') : (j.next_run || '-');
+        const label = document.createElement('div');
+        label.innerHTML =
+          `<strong>${j.name || '(未命名)'}</strong><br>` +
+          `<span class="snote">${mode}<br>下次：${next}<br>上次结果：${j.last_result || '—'}</span>`;
+        row.appendChild(label);
+        const del = document.createElement('button');
+        del.className = 'btn danger';
+        del.textContent = '删除';
+        del.onclick = () => deleteSchedule(j.id);
+        row.appendChild(del);
+        box.appendChild(row);
+      }
+    } catch (e) {
+      toast('读取定时任务失败：' + e.message, true);
+    }
+  }
+  async function createSchedule() {
+    const mode = document.querySelector('input[name="sched-mode"]:checked').value;
+    const body = {
+      name: $('sched-name').value,
+      provider: $('sched-provider').value,
+      mode,
+      enabled: true,
+    };
+    if (mode === 'once') {
+      body.run_at = $('sched-run-at').value || '';
+    } else {
+      body.unit = $('sched-unit').value;
+      body.every = parseInt($('sched-every').value, 10) || 1;
+      body.at = ($('sched-unit').value === 'day') ? ($('sched-at').value || '') : '';
+    }
+    try {
+      await api('/api/schedules', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      toast('已添加定时任务');
+      loadSchedules();
+    } catch (e) {
+      toast('添加失败：' + e.message, true);
+    }
+  }
+  async function deleteSchedule(id) {
+    try {
+      await api('/api/schedules/' + id, { method: 'DELETE' });
+      toast('已删除定时任务');
+      loadSchedules();
+    } catch (e) {
+      toast('删除失败：' + e.message, true);
+    }
+  }
+
   // ============================================================ 初始化
   function init() {
     $('btn-run').addEventListener('click', start);
     $('btn-new-batch').addEventListener('click', startNewBatch);
     $('btn-stop').addEventListener('click', stop);
+    $('btn-schedule').addEventListener('click', openScheduleModal);
+    $('btn-close-schedule').addEventListener('click', closeScheduleModal);
+    $('btn-schedule-cancel').addEventListener('click', closeScheduleModal);
+    $('btn-schedule-add').addEventListener('click', createSchedule);
+    $('schedule-modal').addEventListener('click', (ev) => {
+      if (ev.target === $('schedule-modal')) closeScheduleModal();
+    });
+    document.querySelectorAll('input[name="sched-mode"]').forEach((r) =>
+      r.addEventListener('change', syncSchedFields));
+    $('sched-unit').addEventListener('change', syncSchedFields);
     $('image-view-generated').addEventListener('click', () => setImageView('generated'));
     $('image-view-effect').addEventListener('click', () => setImageView('effect'));
     $('btn-generate-effects').addEventListener('click', generateMissingEffects);

@@ -47,6 +47,11 @@ def _lazy(name: str) -> type[BaseProvider] | None:
         # 早先这里没有分支，选了 custom 会抛「未知服务商」。
         from .openai import OpenAIImageProvider
         return OpenAIImageProvider
+    if name == "aihive":
+        # AI Hive（Nano Banana Pro 裸接口）：文生图 + 图生图，
+        # 走 imagegen.py 同款 OpenAPI（上传三步 / generation/image / 轮询）。
+        from .aihive import AiHiveProvider
+        return AiHiveProvider
     if name == "kling":
         # ⚠️ `catalog.py` 里有「快手可灵」的配置（前端下拉会显示出来），但
         #    `app/providers/` 下**并没有** kling.py。早先这里直接写
@@ -77,7 +82,7 @@ def available_providers() -> list[str]:
        把它们算作「可选」会让 `get_provider()` 一路走到 import 才炸，
        用户看到的是一句 `ModuleNotFoundError`，而不是「这个服务商还没做」。
     """
-    return ["mock", "flux_local", "qwen", "openai", "gemini", "seedream", "custom"]
+    return ["mock", "flux_local", "qwen", "openai", "gemini", "seedream", "custom", "aihive"]
 
 
 def get_provider(name: str) -> type[BaseProvider]:

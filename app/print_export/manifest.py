@@ -33,7 +33,8 @@ __all__ = [
 ]
 
 # 处理流水线版本号：任何影响输出的逻辑变更都应递增，便于追溯旧文件
-PRINT_VERSION = "print-v1"
+#   print-v2：分辨率提升由 LANCZOS 改为 Upscayl 本地超分（可用 upscale_print 开关回退）
+PRINT_VERSION = "print-v2"
 
 PRINT_DIR_NAME = "印刷TIF"
 WORK_DIR_NAME = "_work"
@@ -50,6 +51,9 @@ class ErrorCode:
     ICC_MISSING = "icc_missing"                # ICC 缺失（已降级）
     CUTOUT_FAILED = "cutout_failed"            # 去背失败
     RESIZE_FAILED = "resize_failed"            # 放大失败（可能内存不足）
+    # ⚠️ 超分失败是**记录性**的，不阻断 —— 会自动回落 LANCZOS 继续导出，
+    #    但要在 manifest 里留痕，否则「为什么这张图的清晰度偏低」无从追溯。
+    UPSCAYL_FAILED = "upscayl_failed"          # Upscayl 超分失败（已降级 LANCZOS）
     DIELINE_FAILED = "dieline_failed"          # 刀模轮廓生成失败
     STORAGE_FULL = "storage_full"              # 磁盘满
     STORAGE_ERROR = "storage_error"            # 其它写盘错误

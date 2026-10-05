@@ -168,6 +168,43 @@ class Storage:
             )
         return path
 
+    def save_upscaled_image(
+        self,
+        source_path: Path | str,
+        data: bytes,
+        scale: int,
+    ) -> Path:
+        """把超分放大版另存为 `<stem>_up<倍数>x.png`。
+
+        ⚠️ **绝不覆盖母版**（AGENTS.md 硬规则：批次目录文件绝不覆盖）。
+           放大版与母版**并存**，由 `print_export.resolve_print_source()`
+           在印刷时择优选用 —— 这样 1024px 的原始产出仍可追溯，
+           而印刷可以拿到 4096px 的清晰源（effective_dpi 从 43 提到 173）。
+
+        ⚠️ **幂等**：重复调用（重跑、续跑）只会覆盖同名放大版，
+           不会堆出一串 `_up4x_up4x.png`。
+
+        Args:
+            source_path: 母版路径（用于推导放大版文件名）
+            data: 放大后的 PNG 字节
+            scale: 倍数，进文件名便于区分不同倍数的产物
+
+        Returns:
+            放大版路径
+        """
+        src = Path(source_path)
+        path = src.with_name(f"{src.stem}_up{int(scale)}x{src.suffix or '.png'}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        try:
+            tmp.write_bytes(data)
+            tmp.replace(path)              # 原子替换
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
+        log.info("超分放大版已另存：%s（%.1f MB）", path.name, len(data) / 1024 / 1024)
+        return path
+
     def effect_target_path(self, job: Job, source_path: Path | str | None = None) -> Path:
         """返回与生成图一一对应的效果图路径。"""
         source_name = Path(source_path or job.image_path or self.target_path(job)).name

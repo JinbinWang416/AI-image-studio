@@ -362,6 +362,77 @@ class Orchestrator:
             return None
 
     # ------------------------------------------------------------ 单张处理
+    async def _maybe_upscale(self, job: Job, path, metrics: dict) -> None:
+        """可选：把刚落盘的生成图本地超分放大一份（**不覆盖母版**）。
+
+        ⚠️ 三条硬约束，缺一不可：
+
+        1. **绝不覆盖母版** —— 另存 `<stem>_up<N>x.png`，
+           印刷时由 `resolve_print_source()` 择优选用。
+        2. **失败绝不中断批次** —— 缺二进制 / 无 Vulkan / 超时 / OOM
+           全部只记 warning，`job.status` 仍是 SUCCESS。
+        3. **不阻塞事件循环** —— CLI 是 CPU/GPU 密集的同步调用，
+           必须丢进 `asyncio.to_thread`，否则会卡住整个批次调度。
+        """
+        cfg = getattr(self.cfg, "upscayl", None)
+        if not (cfg and getattr(cfg, "enabled", False)
+                and getattr(cfg, "upscale_generated", False)):
+            return
+
+        def _run() -> dict:
+            # ⚠️ 相对导入的层级按**模块**算，不是按函数嵌套：
+            #    本模块是 `app.generation.orchestrator`，
+            #    `__package__` = `app.generation`，所以 `..` → `app`。
+            #    （写成 `...upscayl` 会抛 ImportError: attempted relative import
+            #      beyond top-level package —— 实测踩过。）
+            from ..upscayl import DEFAULT_TILE, UpscaylEngine
+            from ..upscayl.alpha import upscale_rgba
+
+            engine = UpscaylEngine(binary=str(getattr(cfg, "binary_path", "") or ""))
+            if not engine.available:
+                raise RuntimeError(engine.unavailable_reason())
+
+            scale = int(getattr(cfg, "scale", 4) or 4)
+            model = str(getattr(cfg, "model_generated", "") or "")
+            tile = int(getattr(cfg, "tile", DEFAULT_TILE) or DEFAULT_TILE)
+
+            import tempfile
+            from pathlib import Path as _P
+
+            from PIL import Image as _I
+
+            with tempfile.TemporaryDirectory(prefix="upscayl_gen_") as tmp:
+                tin = _P(tmp) / "in.png"
+                tout = _P(tmp) / "out.png"
+                with _I.open(path) as im:
+                    im.convert("RGBA").save(tin)
+                got = upscale_rgba(engine, tin, tout, model, scale, tile)
+                if got is None:
+                    raise RuntimeError("Upscayl 执行失败")
+                data = _P(got).read_bytes()
+
+            saved = self.storage.save_upscaled_image(path, data, scale)
+            return {
+                "engine": "upscayl",
+                "model": model,
+                "scale": scale,
+                "tile": tile,
+                "file_name": saved.name,
+                "source_pixels": list(_I.open(path).size),
+                "output_pixels": list(_I.open(saved).size),
+            }
+
+        try:
+            info = await asyncio.to_thread(_run)
+            metrics["upscale"] = info
+            job.runtime_metrics["upscale"] = info
+            log.info("生成图超分完成：%s", info.get("file_name"))
+        except Exception as exc:  # noqa: BLE001 - 可选增强，绝不中断批次
+            log.warning("生成图超分失败（已跳过，不影响出图）：%s: %s",
+                        type(exc).__name__, exc)
+            metrics["upscale"] = {"engine": "upscayl", "status": "failed",
+                                  "error": type(exc).__name__}
+
     async def _process(self, job: Job, limiter: RateLimiter, budget: BudgetGuard) -> None:
         job.status = JobStatus.RUNNING
         job.started_at = datetime.now().isoformat(timespec="seconds")
@@ -451,6 +522,17 @@ class Orchestrator:
                     job.runtime_metrics.setdefault("model", result.model)
                 if result.elapsed:
                     job.runtime_metrics.setdefault("provider_elapsed_seconds", round(result.elapsed, 3))
+
+                # ---- 可选：本地超分放大（免费，省高价尺寸档的钱）----
+                #
+                # ⚠️ 另存为 `<stem>_up<N>x.png`，**绝不覆盖母版** ——
+                #    AGENTS.md 硬规则「批次目录文件绝不覆盖」。
+                #    印刷时由 `print_export.resolve_print_source()` 择优选用放大版，
+                #    把 effective_dpi 从 43 提到 173，同时保留 1024 母版可追溯。
+                #
+                # ⚠️ 整段包在 try 里：超分是可选增强，**任何失败都不能中断批次**。
+                await self._maybe_upscale(job, path, metrics)
+
                 # 本地合成效果图，不调用图像服务商，原始贴纸的中文和图案不会被重绘。
                 #
                 # ⚠️ 必须走 resolve_render_options（与网页 /api/effects/generate 共用同一处逻辑），

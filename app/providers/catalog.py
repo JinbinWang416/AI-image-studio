@@ -351,6 +351,38 @@ PROVIDER_CATALOG: dict[str, dict] = {
         "warnings": ["模型名与 Base URL 需自行确认；部分平台的图片接口并不兼容 OpenAI 协议"],
     },
 
+    # ============================================================ AI Hive（香蕉 Pro）
+    "aihive": {
+        "label": "AI Hive（香蕉 Pro）",
+        "vendor": "AI Hive / iclip",
+        "kind": "cloud",
+        "recommended": False,
+        "badge": "Nano Banana",
+        "base_url": "https://ai-hive.iclip.cn/api",
+        "env_key": "AI_HIVE_API_KEY",
+        "key_hint": "AI Hive 控制台 → API 接入 → 新建 API Key",
+        "console_url": "https://ai-hive.iclip.cn/chat",
+        "default_model": "public_model_nano_banana_pro",
+        "summary": "Nano Banana Pro 裸接口图片生成（文生图 + 图生图）。接入后可与定时生图联动，自动出全新图。",
+        "models": [
+            {
+                "id": "public_model_nano_banana_pro",
+                "price": 0.0,
+                "price_unknown": True,
+                "negative": False,
+                "max_n": 1,
+                "rpm": 0,
+                "free_quota": 0,
+                "tags": ["1:1 贴纸", "中文渲染稳定"],
+                "note": "输出自动放大到 2048×2048；中文渲染稳定。API Key 走设置页填写，绝不写死在代码里。",
+            },
+        ],
+        "warnings": [
+            "需自备 AI Hive API Key（sk-api-*），在设置页填写。",
+            "图生图由本适配器自动处理「上传三步」，无需手动上传参考图。",
+        ],
+    },
+
     # ============================================================ 本地模拟
     "mock": {
         "label": "本地模拟",

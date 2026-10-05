@@ -233,8 +233,18 @@ async def run_professional_validation(
     store: Store,
     root: Path = LOCAL_PROFESSIONAL_ROOT,
     on_event: Callable[[dict], Awaitable[None] | None] | None = None,
+    candidates_per_theme: int | None = None,
 ) -> dict:
-    """固定执行 01 门店 6 主题 × 3 候选，不写入通用 output。"""
+    """固定执行 01 门店 6 主题 × N 候选，不写入通用 output。
+
+    Args:
+        candidates_per_theme: 每个主题生成几个候选。``None`` 时用模块默认
+            `CANDIDATES_PER_THEME`（=3，行为与改动前完全一致）。
+            调小它可以直接省掉 2/3 的验证开销 —— 代价是候选少、
+            评分挑不出最优的那张。
+    """
+    per_theme = int(candidates_per_theme or CANDIDATES_PER_THEME)
+    per_theme = max(1, min(per_theme, 10))        # 防御：别被配成 0 或几百
     root = Path(root)
     candidate_dir = root / "candidates" / store.output_dir
     selected_dir = root / "selected" / store.output_dir
@@ -258,10 +268,10 @@ async def run_professional_validation(
         if asyncio.iscoroutine(result):
             await result
 
-    await emit({"type": "professional_started", "total": len(store.items), "candidates_per_theme": CANDIDATES_PER_THEME})
+    await emit({"type": "professional_started", "total": len(store.items), "candidates_per_theme": per_theme})
     for item in store.items:
         candidates: list[dict] = []
-        for number in range(1, CANDIDATES_PER_THEME + 1):
+        for number in range(1, per_theme + 1):
             seed = _seed(store, item, number)
             try:
                 generated = await provider.generate(GenerateRequest(

@@ -17,6 +17,7 @@
     'btn-run': 'batch.create',
     'btn-new-batch': 'batch.create',
     'btn-stop': 'batch.create',
+    'btn-schedule': 'batch.create',
     'btn-local-validation-run': 'batch.create',
     'btn-professional-run': 'batch.create',
     'btn-quality-confirm-run': 'batch.create',

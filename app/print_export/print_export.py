@@ -126,6 +126,53 @@ def _link_or_copy(src: Path, dst: Path) -> str:
         return "failed"
 
 
+def resolve_print_source(source_png: Path) -> tuple[Path, bool]:
+    """有超分放大版就用它做印刷源，否则用原图。
+
+    ⚠️ 这一步是让 `effective_dpi` 真正上去的**关键**：
+
+       `effective_dpi` 按**源图像素**推算（`src_w / (width_cm/2.54)`）。
+       拿 1024px 的原图印 60cm，算出来只有 43 DPI，会触发清晰度警告、
+       诱发人工重跑白烧 API 费；而超分放大版是 4096px，算出来就是 173 DPI。
+
+       **母版 1024 一个字节都不动** —— 只是换了个更清晰的源来印刷
+       （批次目录文件绝不覆盖，AGENTS.md 硬规则）。
+
+    放大版由 P3 的生成图放大链路产出，命名 `<stem>_up<倍数>x.png`，
+    例如 `20260919_014534_03_房屋门牌_up4x.png`。
+
+    Returns:
+        ``(要用的源路径, 是否用了放大版)``
+    """
+    src = Path(source_png)
+    if not src.is_file():
+        return src, False
+    try:
+        cands = [
+            p for p in src.parent.glob(f"{src.stem}_up*x.png")
+            if p.is_file() and p != src
+        ]
+    except OSError:
+        return src, False
+    if not cands:
+        return src, False
+
+    best, best_px = src, 0
+    for p in cands:
+        try:
+            with Image.open(p) as im:
+                px = im.size[0] * im.size[1]
+        except OSError:
+            continue
+        if px > best_px:
+            best, best_px = p, px
+
+    if best is src:
+        return src, False
+    log.info("印刷使用超分放大版：%s", best.name)
+    return best, True
+
+
 class PrintExporter:
     """印刷导出器。
 
@@ -163,6 +210,67 @@ class PrintExporter:
         self._icc_path, self._icc_source = find_icc_profile(
             getattr(cfg, "print_icc_path", "") or ""
         )
+
+    # ---------------------------------------------------------------- 分辨率提升
+    def _upscale_rgba(self, rgba: Image.Image, target: tuple[int, int],
+                      mf) -> tuple[Image.Image, dict]:
+        """把 RGBA 放大到目标尺寸，返回 `(图, upscaler 信息)`。
+
+        ⚠️ 优先用 Upscayl 本地超分（免费，细节比插值好得多），
+           **失败或未开启时静默回落 LANCZOS** —— 这是硬性约束：
+           超分是个可选的增强，不能因为它把整条印刷链路搞停。
+
+           回落时记 `UPSCAYL_FAILED` 到 manifest，否则「这张图为什么偏糊」
+           事后无从追溯。
+        """
+        target_w, target_h = target
+        cfg = getattr(self.cfg, "upscayl", None)
+        want = bool(cfg and getattr(cfg, "enabled", False)
+                    and getattr(cfg, "upscale_print", False))
+        if not want:
+            return rgba.resize((target_w, target_h), Image.LANCZOS), {}
+
+        info: dict = {}
+        try:
+            from ..upscayl import DEFAULT_TILE, UpscaylEngine, upscale_rgba_to_target
+
+            engine = UpscaylEngine(binary=str(getattr(cfg, "binary_path", "") or ""))
+            if not engine.available:
+                raise RuntimeError(engine.unavailable_reason())
+
+            import tempfile
+
+            with tempfile.TemporaryDirectory(prefix="upscayl_print_") as tmp:
+                tmp_in = Path(tmp) / "in.png"
+                tmp_out = Path(tmp) / "out.png"
+                rgba.save(tmp_in)
+                got = upscale_rgba_to_target(
+                    engine, tmp_in, tmp_out,
+                    max(target_w, target_h),
+                    str(getattr(cfg, "model_print", "") or "realesrgan-x4plus"),
+                    int(getattr(cfg, "tile", DEFAULT_TILE) or DEFAULT_TILE),
+                )
+                if got is None:
+                    raise RuntimeError("Upscayl 执行失败")
+                with Image.open(got) as im:
+                    up = im.convert("RGBA")
+                info = {
+                    "engine": "upscayl",
+                    "model": str(getattr(cfg, "model_print", "")),
+                    "tile": int(getattr(cfg, "tile", DEFAULT_TILE) or DEFAULT_TILE),
+                    "from": list(rgba.size),
+                    "to": list(up.size),
+                }
+            # 超分的倍数不一定是目标尺寸，缩到精确值（细节已由超分补上）
+            if up.size != (target_w, target_h):
+                up = up.resize((target_w, target_h), Image.LANCZOS)
+            log.info("印刷超分完成：%s", info.get("model"))
+            return up, info
+        except Exception as exc:  # noqa: BLE001 - 任何失败都要降级，不能中断导出
+            log.warning("Upscayl 超分失败，回落 LANCZOS：%s: %s", type(exc).__name__, exc)
+            mf.error_code = mf.error_code or ErrorCode.UPSCAYL_FAILED
+            mf.warnings.append(f"Upscayl 超分失败，已回落 LANCZOS：{type(exc).__name__}")
+            return rgba.resize((target_w, target_h), Image.LANCZOS), {}
 
     # ---------------------------------------------------------------- 工具
     def _target_size(self, src_w: int, src_h: int) -> tuple[int, int]:
@@ -202,6 +310,9 @@ class PrintExporter:
         name = store_name or store_dir.name
         result = PrintExportResult(store_dir=store_dir)
 
+        # ⚠️ 有超分放大版就换它当源（母版不动）—— 这一步直接决定 effective_dpi
+        source_png, used_upscaled = resolve_print_source(source_png)
+
         print_dir = store_dir / PRINT_DIR_NAME
         preview_dir = store_dir / PREVIEW_DIR_NAME
         work_dir = store_dir / WORK_DIR_NAME
@@ -210,6 +321,8 @@ class PrintExporter:
 
         mf = PrintManifest()
         mf.source_png = self._rel(source_png)
+        if used_upscaled:
+            mf.options["source_is_upscaled"] = True
 
         # ---- 源文件检查 ----
         if not source_png.is_file():
@@ -256,7 +369,9 @@ class PrintExporter:
         mf.dpi = int(getattr(self.cfg, "print_dpi", 300) or 300)
         mf.height_cm = round(width_cm * target_h / max(1, target_w), 2)
         try:
-            big = rgba.resize((target_w, target_h), Image.LANCZOS)
+            big, up_info = self._upscale_rgba(rgba, (target_w, target_h), mf)
+            if up_info:
+                mf.options["upscaler"] = up_info
         except Exception as exc:  # noqa: BLE001 - 通常是内存不足
             return self._fail(result, mf, ErrorCode.RESIZE_FAILED,
                               f"放大到 {target_w}x{target_h} 失败：{type(exc).__name__}", t0)

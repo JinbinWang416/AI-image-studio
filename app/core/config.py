@@ -349,6 +349,29 @@ class ImageWorkflowConfig:
     reference_assets: list[dict] = field(default_factory=list)
 
 
+@dataclass
+class UpscaylConfig:
+    """Upscayl 本地超分（Real-ESRGAN / ncnn / Vulkan）。
+
+    ⚠️ **默认 `enabled=False`** —— 上线零风险：不开启时所有链路行为与现状完全一致。
+
+    开启后失败会自动回落 LANCZOS 并记 warning，绝不中断批次。
+
+    两个实测坑（详见 `app/upscayl/engine.py`）：
+      · `tile` **绝不能是 0**（auto tile 会输出尺寸正常但全黑的图）
+      · alpha 处理不依赖 CLI 行为，走 `app/upscayl/alpha.py` 的拆合方案
+    """
+
+    enabled: bool = False                    # 总开关（一键回滚）
+    binary_path: str = ""                    # 留空用 tools/upscayl/upscayl-bin.exe
+    model_generated: str = "realesr-animevideov3-x4"
+    model_print: str = "realesrgan-x4plus"
+    scale: int = 4                           # 生成图放大倍数（须在模型的 scales 内）
+    tile: int = 128                          # 绝不取 0
+    upscale_generated: bool = False          # 生成图落盘后放大
+    upscale_print: bool = False              # 印刷导出走超分
+
+
 # 子配置名 → 类型（供兼容层与工厂使用）
 _SUBCONFIGS: dict[str, type] = {
     "providers": ProviderConfig,
@@ -363,6 +386,7 @@ _SUBCONFIGS: dict[str, type] = {
     "print": PrintConfig,
     "scope": ScopeConfig,
     "image_workflow": ImageWorkflowConfig,
+    "upscayl": UpscaylConfig,
 }
 
 # 旧扁平字段名 → (子配置名, 子字段名)
@@ -473,6 +497,7 @@ class Config:
     print: PrintConfig = field(default_factory=PrintConfig)
     scope: ScopeConfig = field(default_factory=ScopeConfig)
     image_workflow: ImageWorkflowConfig = field(default_factory=ImageWorkflowConfig)
+    upscayl: UpscaylConfig = field(default_factory=UpscaylConfig)
 
     # ---- 语义便捷属性（保留原有对外行为）----
     @property

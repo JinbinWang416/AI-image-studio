@@ -55,3 +55,8 @@ desktop/
 *.spec
 门店贴纸图片生成智能体桌面安装包_*.exe
 门店贴纸图片生成智能体桌面安装包_*.exe.sha256
+
+# ---- 交付产物与开发副本（含真实 API Key，绝不能进仓库）----
+delivery/
+_portable_stage/
+*_开发者交接包_*.zip

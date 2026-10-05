@@ -39,6 +39,7 @@
     </span>
     <button id="btn-run" class="btn primary">▶ 开始/继续</button>
     <button id="btn-new-batch" class="btn">✨ 重新生成</button>
+    <button id="btn-schedule" class="btn">⏰ 定时生图</button>
     <button id="btn-stop" class="btn danger" disabled>■ 停止</button>
   </div>
 
@@ -152,6 +153,7 @@
         <button type="button" class="settings-nav-item" data-pane="quality">✎ 提示词与质量</button>
         <button type="button" class="settings-nav-item" data-pane="files">▣ 文件与保存</button>
         <button type="button" class="settings-nav-item" data-pane="generation">⚙ 生成参数</button>
+        <button type="button" class="settings-nav-item" data-pane="upscayl">🔍 本地超分</button>
         <button type="button" class="settings-nav-item" data-pane="safety">◈ 质检与安全</button>
         <button type="button" class="settings-nav-item" data-pane="operations">◷ 运行与历史</button>
       </aside>
@@ -432,6 +434,76 @@
       </section>
 
       <!-- 组 4：质检与安全 -->
+      <!-- 组：Upscayl 本地超分 -->
+      <section class="sgroup settings-pane" data-pane="upscayl">
+        <h3><span class="ico">🔍</span> Upscayl 本地超分（免费）</h3>
+        <p class="ghint">
+          用本地 GPU 把低价档生成的图放大，替代印刷时的插值放大。
+          <b>完全免费、不联网</b>。默认关闭，开启后失败会自动回落到原来的插值方式，不影响出图。
+        </p>
+
+        <div class="sgrid">
+          <label class="scheck">
+            <input type="checkbox" id="s-upscayl-enabled">
+            <span>启用 Upscayl 本地超分</span>
+          </label>
+        </div>
+
+        <div class="sgrid" style="margin-top:10px">
+          <label class="sfield">
+            <span>可执行文件路径（留空自动查找）</span>
+            <input id="s-upscayl-binary" type="text" spellcheck="false"
+                   placeholder="tools/upscayl/upscayl-bin.exe">
+          </label>
+        </div>
+
+        <div class="pcard-row" style="margin-top:10px">
+          <button type="button" class="btn" id="s-upscayl-test">测试（真跑一次，本地免费）</button>
+          <span class="snote" id="s-upscayl-test-result"></span>
+        </div>
+
+        <div class="sgrid" style="margin-top:14px">
+          <label class="sfield">
+            <span>生成图模型</span>
+            <select id="s-upscayl-model-generated"></select>
+          </label>
+          <label class="sfield">
+            <span>印刷模型</span>
+            <select id="s-upscayl-model-print"></select>
+          </label>
+          <label class="sfield">
+            <span>放大倍数</span>
+            <select id="s-upscayl-scale">
+              <option value="2">2×</option>
+              <option value="3">3×</option>
+              <option value="4">4×</option>
+            </select>
+          </label>
+          <label class="sfield">
+            <span>分块大小 tile（≥32，推荐 128）</span>
+            <input id="s-upscayl-tile" type="number" min="32" step="32" value="128">
+          </label>
+        </div>
+
+        <div class="sgrid" style="margin-top:10px">
+          <label class="scheck">
+            <input type="checkbox" id="s-upscayl-generated">
+            <span>生成图落盘后放大（另存 <code>_upNx.png</code>，母版不动）</span>
+          </label>
+          <label class="scheck">
+            <input type="checkbox" id="s-upscayl-print">
+            <span>印刷导出使用超分（有放大版时优先用它）</span>
+          </label>
+        </div>
+
+        <p class="snote" style="margin-top:10px">
+          ⚠️ <b>tile 不能填 0</b>：CLI 的 auto tile 会输出尺寸正常但<b>全黑</b>的图，很难发现。
+          <br>
+          ⚠️ 实测 <code>realesr-animevideov3-x2</code> 会产出平铺伪影（SSIM 仅 0.57），<b>不要选它</b>；
+          推荐 <code>realesr-animevideov3-x4</code>（0.978）或 <code>realesrgan-x4plus</code>（0.969）。
+        </p>
+      </section>
+
       <section class="sgroup settings-pane" data-pane="safety">
         <h3><span class="ico">🔍</span> 质检与安全</h3>
         <div class="sgrid">
@@ -518,6 +590,40 @@
 <div class="lightbox" id="lightbox">
   <img id="lightbox-img" alt="">
   <div class="lightbox-cap" id="lightbox-cap"></div>
+</div>
+
+<div class="modal" id="schedule-modal" aria-hidden="true">
+  <div class="modal-box lg">
+    <div class="modal-head">
+      <h2><span class="ico">⏰</span> 定时生图</h2>
+      <button id="btn-close-schedule" class="btn-close" title="关闭 (Esc)">✕</button>
+    </div>
+    <div class="modal-body">
+      <p class="snote">到点自动创建<strong>新批次</strong>并出全新图（适合日更素材）。单次任务触发后自动删除；循环任务按间隔重复。运行中有任务正在跑时自动跳过并记录。</p>
+      <p><label>任务名称：<input id="sched-name" type="text" placeholder="可选，如：每日门店贴纸" size="28" /></label></p>
+      <p><label>服务商：<select id="sched-provider"><option value="">当前活动服务商</option></select></label></p>
+      <p>触发方式：
+        <label><input type="radio" name="sched-mode" value="once" checked /> 单次（未来某时刻）</label>
+        <label><input type="radio" name="sched-mode" value="interval" /> 循环（按间隔）</label>
+      </p>
+      <p id="sched-once-field">触发时间：<input id="sched-run-at" type="datetime-local" /></p>
+      <p id="sched-interval-field" hidden>每
+        <input id="sched-every" type="number" min="1" value="1" style="width:64px" />
+        <select id="sched-unit">
+          <option value="minute">分钟</option>
+          <option value="hour">小时</option>
+          <option value="day" selected>天</option>
+        </select>
+        <span id="sched-at-field" hidden>每天时刻 <input id="sched-at" type="time" value="09:00" /></span>
+      </p>
+      <div class="modal-foot">
+        <button id="btn-schedule-add" class="btn primary">添加定时任务</button>
+        <button id="btn-schedule-cancel" class="btn">取消</button>
+      </div>
+      <h3>已设定的任务</h3>
+      <div id="schedule-list"></div>
+    </div>
+  </div>
 </div>
 
 <div class="toast" id="toast"></div>

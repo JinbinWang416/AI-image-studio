@@ -65,14 +65,23 @@ class EffectParams:
     perspective: float = 0.0             # 透视剪切强度（0 = 关闭，真实拍摄有轻微透视）
 
     # ---- 背景层 ----
-    background_blur_ratio: float = 0.003  # 背景模糊半径 / 画面宽（景深）
+    # 背景模糊半径 / 画面宽（景深）。
+    # ⚠️ 2026-10-05 用户明确要求「不要模糊处理」：背景必须清晰锐利。
+    #    此前默认 0.003（2048 宽 ≈ 6px 高斯模糊），叠加 AI 背景自带的
+    #    大光圈虚化后，整张效果图糊成一团，看不出是房屋中介的店。
+    #    现默认关闭（0.0）；模糊能力保留，可在 UI「背景模糊」里按需加回（0~0.06）。
+    background_blur_ratio: float = 0.0
     # 暖光叠加强度（**基准值**，实际会随贴纸色系 ×0.75~1.25，见 _estimate_color_profile）
     # 基准取 0.16：暖色贴纸（餐饮类）→ 实际 0.20；冷色贴纸（如蓝色房屋中介）→ 实际 0.12
     warm_strength: float = 0.16
 
     # ---- 贴纸层 ----
     brightness_match: float = 0.82        # 亮度向环境归一化的强度
-    transmission: float = 0.07            # 透光率（背景透出比例）
+    # 透光率（背景透出比例）。
+    # ⚠️ 2026-10-05 用户要求「贴纸要 100% 不透光」：此前默认 0.07 会让背景
+    #    透过贴纸，浅色装饰圈 / 云纹 / 描边处能明显看到后面的墙面与海报，
+    #    一眼就是合成图。现默认关闭（0.0），贴纸只显示自身图案。
+    transmission: float = 0.0
     feather_ratio: float = 0.0018         # 边缘羽化半径 / 画面宽
     # 贴纸整体柔化：真实拍摄中贴纸边缘能量实测 31~44，而纯矢量合成可达 87，
     # 适度柔化更接近实拍观感（0 = 完全不柔化，保持像素级锐利）
@@ -174,13 +183,13 @@ PARAM_SPEC: dict[str, tuple] = {
     "perspective": (0.0, 0.12, 0.005, "透视强度", "构图",
                     "轻微透视剪切，模拟斜拍。0 = 完全正面"),
     "background_blur_ratio": (0.0, 0.06, 0.002, "背景模糊", "背景层",
-                              "景深虚化强度 ÷ 画面宽。竞品实测 1.5%~3%"),
+                             "背景景深虚化强度。0 = 背景完全清晰（默认，贴纸像贴在干净玻璃上）"),
     "warm_strength": (0.0, 0.35, 0.01, "暖光强度", "背景层",
                       "整体向 3500K 暖光靠拢的程度"),
     "brightness_match": (0.0, 1.0, 0.02, "贴纸亮度匹配", "贴纸层",
                          "把贴纸亮度向环境归一化。越高越不容易『自带发光』"),
     "transmission": (0.0, 0.25, 0.01, "贴纸透光率", "贴纸层",
-                     "静电膜的透光程度，背景会略微透出"),
+                     "背景透过贴纸的比例。0 = 贴纸完全不透光（默认，浅色纹样不会透出背景）"),
     "feather_ratio": (0.0, 0.006, 0.0002, "边缘羽化", "贴纸层",
                       "贴纸边缘柔化，避免数学级锐利"),
     "softness": (0.0, 1.0, 0.05, "贴纸柔化", "贴纸层",
@@ -216,7 +225,7 @@ PARAM_PRESETS: dict[str, dict] = {
             "sticker_width_ratio": 0.78,
             "sticker_height_ratio": 0.56,
             "vertical_center": 0.42,
-            "background_blur_ratio": 0.010,
+            "background_blur_ratio": 0.0,
             "reflection_strength": 0.22,
             "warm_strength": 0.13,
             "vignette_strength": 0.10,
@@ -229,7 +238,7 @@ PARAM_PRESETS: dict[str, dict] = {
             "sticker_width_ratio": 0.94,
             "sticker_height_ratio": 0.92,
             "vertical_center": 0.48,
-            "background_blur_ratio": 0.008,
+            "background_blur_ratio": 0.0,
             "reflection_strength": 0.26,
             "warm_strength": 0.10,
             "vignette_strength": 0.08,
@@ -290,12 +299,14 @@ def _mix(a: tuple[int, int, int], b: tuple[int, int, int], t: float) -> tuple[in
 
 def _stable_palette(key: str) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
     """按门店名稳定地取一组配色，保证同一门店每次渲染一致。"""
+    # 2026-10-05：整体调亮（原 dark 仅 26~48，渲染出的模拟背景发黑）。
+    # 保留原有色系（蓝灰/暖灰/绿灰/紫灰/暖棕），只把明度抬到「白天店内」区间。
     palettes = (
-        ((26, 46, 58), (196, 214, 210)),
-        ((44, 40, 36), (214, 198, 172)),
-        ((30, 52, 46), (186, 212, 190)),
-        ((38, 36, 52), (206, 198, 224)),
-        ((48, 42, 34), (222, 206, 176)),
+        ((104, 128, 142), (198, 216, 212)),
+        ((126, 116, 104), (222, 208, 184)),
+        ((106, 134, 124), (190, 216, 194)),
+        ((114, 112, 134), (212, 206, 228)),
+        ((132, 120, 100), (228, 214, 190)),
     )
     digest = hashlib.sha256(key.encode("utf-8")).hexdigest()
     return palettes[int(digest[:2], 16) % len(palettes)]
@@ -334,7 +345,7 @@ def _draw_simulated_storefront(canvas: Image.Image, name: str,
     fd = ImageDraw.Draw(far, "RGBA")
 
     # 天花板与地面分区
-    fd.rectangle((0, 0, width, int(height * 0.10)), fill=(*_shade(dark, 0.62), 255))
+    fd.rectangle((0, 0, width, int(height * 0.10)), fill=(*_shade(dark, 0.95), 255))
     fd.rectangle((0, int(height * 0.78), width, height), fill=(*_shade(dark, 1.35), 255))
 
     # 货架 / 柜体的横向层次（用亮暗交替暗示纵深）
@@ -374,7 +385,7 @@ def _draw_simulated_storefront(canvas: Image.Image, name: str,
     # 玻璃本身：把透视过来的店内环境压暗（玻璃吸光）
     glass_layer = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     ImageDraw.Draw(glass_layer, "RGBA").rectangle(
-        (gx0, gy0, gx1, gy1), fill=(*_shade(dark, 0.55), 96)
+        (gx0, gy0, gx1, gy1), fill=(*_shade(dark, 0.78), 70)
     )
     canvas.alpha_composite(glass_layer)
 
@@ -600,8 +611,10 @@ def _reflection_layer(canvas: Image.Image, glass: tuple[int, int, int, int],
 
 
 # ================================================================ 层 ④ 前景
-# 输出亮度的目标值：用户真实产品照 85.1、拼多多商品图 77.0，取其中值。
-TARGET_LUMA = 80.0
+# 输出亮度的目标值（2026-10-05 调整）。
+# 旧值 80 偏暗、偏「氛围夜景」；用户要求效果图「明亮真实」，
+# 故上调到 125，让成品落在明亮白天的实拍亮度区间。
+TARGET_LUMA = 125.0
 # 暗角上限：拼多多 8 张商品图的四角亮度在 34~88（均值 56），
 # 而我们早期版本四角仅 12.8 —— 过强的暗角会让画面"发闷"。
 VIGNETTE_FLOOR = 20.0

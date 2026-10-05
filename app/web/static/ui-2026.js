@@ -499,7 +499,7 @@
     initCopyBatch();
 
     // 状态变化：按钮 disabled 是重要信号
-    ['#btn-run', '#btn-stop', '#btn-new-batch'].forEach((sel) => {
+    ['#btn-run', '#btn-stop', '#btn-new-batch', '#btn-schedule'].forEach((sel) => {
       const el = document.querySelector(sel);
       if (el) {
         new MutationObserver(renderRunStatus)
