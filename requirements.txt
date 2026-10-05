@@ -62,3 +62,8 @@ onnxruntime==1.30.0
 # 注意：Pillow 12.x 已内置 ImageCms（lcms2 绑定），
 #       **不需要**额外安装 pillow-lcms2 或 python-lcms2。
 # ---------------------------------------------------------------------------
+
+# --- 印刷单文件（tifffile 解/压 LZW 需要它）---
+# 用于把 CMYK + 白墨写成**一个 5 通道 TIF**（对齐海邦达 H-2003E 的可用样例）
+# 没有它 tifffile 会抛 ValueError: <COMPRESSION.LZW: 5> requires the 'imagecodecs' package
+imagecodecs==2026.8.16

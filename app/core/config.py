@@ -318,12 +318,17 @@ class PrintConfig:
 
     enabled: bool = True
     width_cm: float = 60.0
-    dpi: int = 300
+    # ⚠️ 默认 120 DPI —— 对齐现场「能直接打印」的样例
+    #    （`学生托管门店_01.tif`：2835px @120dpi = 60cm）。
+    #    原先的 300 DPI 会生成 7087px，像素量是实际需求的 6.25 倍，
+    #    全被 RIP 缩掉，只是白白撑大文件、拖慢生成与超分。
+    dpi: int = 120
     bleed_mm: float = 3.0
     icc_path: str = ""
     white_ink: bool = True
     white_ink_invert: bool = False
-    dieline: bool = True
+    # ⚠️ 默认关：H-2003E 是**卷材机**，在线裁切，不做模切 —— 刀模层没地方用。
+    dieline: bool = False
     cutout: str = "auto"                     # auto | rembg | fallback
     spot_channel: bool = False
     max_pixels: int = 8000
@@ -337,6 +342,10 @@ class PrintConfig:
     #    这两个是**交付必需**，下面两个才是可省的：
     keep_merged_preview: bool = False         # `<门店>_合并预览.tif`（仅供人工核对）
     keep_preview_jpg: bool = False            # `预览/*.jpg` 缩略图（同上）
+    # ⚠️ 默认**单文件**：把 CMYK 与白墨合成**一个 5 通道 TIF**，
+    #    对齐现场能直接打印的样例（SamplesPerPixel=5、LZW、Predictor=2）。
+    #    关掉则退回旧的分层输出（`_CMYK.tif` + `_白墨.tif`），供需要分层的 RIP 使用。
+    single_file: bool = True
 
 
 @dataclass

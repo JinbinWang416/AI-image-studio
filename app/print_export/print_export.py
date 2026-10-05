@@ -383,8 +383,14 @@ class PrintExporter:
         if not dry_run:
             try:
                 print_dir.mkdir(parents=True, exist_ok=True)
-                preview_dir.mkdir(parents=True, exist_ok=True)
-                work_dir.mkdir(parents=True, exist_ok=True)
+                # ⚠️ `预览/` 与 `_work/` **按需创建** —— 默认不生成预览、
+                #    也没留母版链接时，建两个空目录只会让交付目录变乱
+                #    （需求是「只留最终打印的」）。
+                if getattr(getattr(self.cfg, "print", None),
+                           "keep_preview_jpg", False):
+                    preview_dir.mkdir(parents=True, exist_ok=True)
+                if getattr(self.cfg, "print_keep_work", True):
+                    work_dir.mkdir(parents=True, exist_ok=True)
             except OSError as exc:
                 return self._fail(result, mf, self._os_code(exc),
                                   f"创建输出目录失败：{type(exc).__name__}", t0)
@@ -395,31 +401,40 @@ class PrintExporter:
             mf.options["work_link"] = link_mode
 
         # ---- ② 白墨层 ----
+        #
+        # ⚠️ 单文件模式下**不写独立文件**（末尾会与 CMYK 合成 5 通道 TIF）。
+        #    极性：`make_white_ink(invert=False)` 输出 `255 = 印白墨、0 = 不印`，
+        #    与现场样例的第 5 通道一致 —— 反了会导致整版印白或完全不印。
+        print_cfg = getattr(self.cfg, "print", None)
+        single_file = bool(getattr(print_cfg, "single_file", True))
         white_path = print_dir / f"{name}_白墨.tif"
+        white = None
         if getattr(self.cfg, "print_white_ink", True):
             try:
                 white = make_white_ink(
                     big,
                     invert=bool(getattr(self.cfg, "print_white_ink_invert", False)),
                 )
-                white.save(white_path, format="TIFF", compression=TIFF_COMPRESSION)
-                mf.layers["white_ink"] = white_path.name
                 mf.options["white_ink"] = True
                 mf.options["white_ink_invert"] = bool(
                     getattr(self.cfg, "print_white_ink_invert", False)
                 )
+                if not single_file:
+                    white.save(white_path, format="TIFF", compression=TIFF_COMPRESSION)
+                    mf.layers["white_ink"] = white_path.name
             except OSError as exc:
                 return self._fail(result, mf, self._os_code(exc),
                                   f"白墨层写入失败：{type(exc).__name__}", t0)
             except Exception as exc:  # noqa: BLE001
                 mf.warnings.append(f"白墨层生成失败：{type(exc).__name__}")
+                white = None
         else:
             mf.options["white_ink"] = False
             white = None
 
         # ---- ④ 刀模线 + 出血 ----
         dieline_path = print_dir / f"{name}_刀模.tif"
-        if getattr(self.cfg, "print_dieline", True):
+        if getattr(self.cfg, "print_dieline", True) and not single_file:
             try:
                 outline = find_outline(big, bleed_px=mf.bleed_px)
                 if not outline:
@@ -439,10 +454,12 @@ class PrintExporter:
             except Exception as exc:  # noqa: BLE001
                 mf.warnings.append(f"刀模层生成失败：{type(exc).__name__}")
         else:
+            # 单文件模式（卷材机不模切）下不生成刀模层
             mf.options["dieline"] = False
 
         # ---- ③ RGB → CMYK + 偏色保护 ----
         cmyk_path = print_dir / f"{name}_CMYK.tif"
+        stacked_path = print_dir / f"{name}.tif"
         try:
             cmyk_img, icc_info = to_cmyk(big, self._icc_path)
             icc_info["source"] = self._icc_source
@@ -455,8 +472,21 @@ class PrintExporter:
                 mf.warnings.extend(f"偏色保护 · {n}" for n in notes)
                 mf.options["color_protection"] = notes
 
-            cmyk_img.save(cmyk_path, format="TIFF", compression=TIFF_COMPRESSION)
-            mf.layers["cmyk"] = cmyk_path.name
+            if single_file:
+                # ⚠️ 交付给印刷厂的就是这**一个**文件：5 通道 = CMYK + 白墨专色。
+                #    结构对齐现场样例（SamplesPerPixel=5 / LZW / Predictor=2 / 120dpi）。
+                from .stacked import save_stacked_cmyk_white
+
+                save_stacked_cmyk_white(
+                    stacked_path, cmyk_img, white,
+                    dpi=int(getattr(self.cfg, "print_dpi", 120) or 120),
+                )
+                mf.layers["stacked"] = stacked_path.name
+                mf.options["single_file"] = True
+                mf.options["channels"] = 5 if white is not None else 4
+            else:
+                cmyk_img.save(cmyk_path, format="TIFF", compression=TIFF_COMPRESSION)
+                mf.layers["cmyk"] = cmyk_path.name
         except OSError as exc:
             return self._fail(result, mf, self._os_code(exc),
                               f"CMYK 层写入失败：{type(exc).__name__}", t0)
@@ -527,17 +557,18 @@ class PrintExporter:
 
         result.ok = True
         result.manifest = mf
-        # ⚠️ 只列**本次产出**的文件，不能 `iterdir()` 整个目录 ——
-        #    一个门店有 6 张图，共享同一个 印刷TIF/ 目录，
-        #    列全目录会让"重跑一次"的文件数越滚越多（实测 5 → 25）。
-        #
-        # ⚠️ 交付给印刷厂的是 **CMYK + 白墨 + 刀模** 三层：
-        #      · CMYK —— 印刷主文件
-        #      · 白墨 —— UV 打印在透明介质（玻璃贴纸）上必须打底，
-        #                少了它颜色是透明的、贴上去看不见
-        #      · 刀模 —— 模切轮廓
-        #    合并预览与 JPEG 缩略图默认不生成（见 ⑥），所以这里可能为 None。
-        produced = [cmyk_path, white_path, dieline_path]
+        # ⚠️ 交付给印刷厂（H-2003E + Caldera RIP）的产物：
+        #      · **单文件模式（默认）** —— 一个 5 通道 TIF：CMYK + 白墨专色
+        #      · 分层模式 —— `_CMYK.tif` + `_白墨.tif`（供需要分层的 RIP）
+        #    白墨层**必须**在：UV 打印在透明介质（玻璃贴纸）上要靠它打底，
+        #    删了颜色就是透明的、贴上去看不见。
+        produced: list[Path | None] = []
+        if single_file:
+            produced.append(stacked_path)
+        else:
+            produced.extend([cmyk_path, white_path if white is not None else None])
+        if getattr(self.cfg, "print_dieline", True) and not single_file:
+            produced.append(dieline_path)
         if merged_path is not None:
             produced.append(merged_path)
         produced.append(print_dir / "print_manifest.json")

@@ -79,6 +79,10 @@ class PrintExportBase(unittest.TestCase):
         self.cfg.print_white_ink = True
         self.cfg.print_dieline = True
         self.cfg.print_keep_work = True
+        # ⚠️ 测试基类用**分层模式**：这一组测试验证的是各层（CMYK / 白墨 / 刀模）
+        #    自身的正确性，分层才看得到。单文件合成另有一组测试
+        #    （`TestSingleFile`）专门验证。
+        self.cfg.print.single_file = False
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
@@ -182,6 +186,84 @@ class TestOutputs(PrintExportBase):
         with Image.open(p) as im:
             self.assertLessEqual(max(im.size), 1200, f"预览尺寸 {im.size} 超过 1200")
             self.assertEqual(im.format, "JPEG")
+
+
+class TestSingleFile(PrintExportBase):
+    """交付单文件模式：一个 5 通道 TIF（CMYK + 白墨专色）。
+
+    结构是拿现场「能直接打印」的样例反推出来的
+    （`学生托管门店_01.tif`）：
+
+        SamplesPerPixel = 5 / BitsPerSample = (8,8,8,8,8)
+        Photometric = 5 (separated/CMYK) / ExtraSamples = (0,)
+        Compression = 5 (LZW) / Predictor = 2 / Resolution = 120
+
+    第 5 通道是**双峰蒙版**：`255 = 印白墨`（图案区）、`0 = 不印`（透明背景）。
+    极性反了会导致整版印白、或完全不印白（贴上去颜色透明）。
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.cfg.print.single_file = True
+        self.cfg.print.dpi = 120
+        self.cfg.print.dieline = False
+
+    def test_only_one_tif_and_manifest(self) -> None:
+        """只产出一个 TIF + manifest（不再有 _CMYK / _白墨 / _刀模 分文件）。"""
+        res = self.export()
+        self.assertTrue(res.ok, f"导出失败：{res.error_code} {res.error_message}")
+        tifs = sorted(p.name for p in self.print_dir().glob("*.tif"))
+        self.assertEqual(len(tifs), 1, f"应只有一个 TIF，实际 {tifs}")
+        self.assertEqual(tifs[0], "01_测试门店_01.tif")
+        for unwanted in ("_CMYK.tif", "_白墨.tif", "_刀模.tif", "_合并预览.tif"):
+            self.assertFalse(
+                (self.print_dir() / f"01_测试门店_01{unwanted}").exists(),
+                f"单文件模式下不应有 {unwanted}",
+            )
+
+    def test_structure_matches_sample(self) -> None:
+        """TIFF 标签必须与现场样例一致 —— 这是「能直接打印」的前提。"""
+        self.export()
+        from app.print_export.stacked import describe
+
+        d = describe(self.print_dir() / "01_测试门店_01.tif")
+        self.assertEqual(d["samples_per_pixel"], 5, "必须是 5 通道（CMYK+白墨）")
+        self.assertEqual(d["bits_per_sample"], 8)
+        self.assertEqual(d["photometric"], 5, "CMYK（separated）")
+        self.assertEqual(d["extrasamples"], [0], "1 个额外通道 = 白墨专色")
+        self.assertEqual(d["compression"], 5, "LZW")
+        self.assertEqual(d["predictor"], 2, "水平差分预测")
+
+    def test_size_matches_60cm_at_dpi(self) -> None:
+        """60cm @ 120dpi = 2835px（与样例完全一致）。"""
+        res = self.export()
+        # 测试基类把宽度设成 10cm，这里按 10cm @120dpi = 472px 验算
+        expected = round(10.0 / 2.54 * 120)
+        self.assertEqual(res.manifest.output_pixels[0], expected,
+                         f"10cm@120dpi 应为 {expected}px")
+
+    def test_white_channel_is_binary_and_correct_polarity(self) -> None:
+        """第 5 通道是二值蒙版，且**图案区为 255**（印白墨）。"""
+        import numpy as np
+
+        self.export()
+        from app.print_export.stacked import read_stacked
+
+        _, white = read_stacked(self.print_dir() / "01_测试门店_01.tif")
+        a = np.asarray(white)
+        vals = set(np.unique(a).tolist())
+        self.assertTrue(vals <= {0, 255}, f"白墨应是二值蒙版，实际取值 {sorted(vals)[:8]}")
+        # 测试图是居中的圆角矩形，中心必是图案 → 必须印白墨
+        cy, cx = a.shape[0] // 2, a.shape[1] // 2
+        self.assertEqual(int(a[cy, cx]), 255, "图案区应印白墨（255）")
+        # 左上角是背景 → 不印
+        self.assertEqual(int(a[2, 2]), 0, "透明背景不应印白墨（0）")
+
+    def test_no_preview_dir_created(self) -> None:
+        """交付精简：不生成预览就不该留下空的 `预览/` 目录。"""
+        self.export()
+        self.assertFalse((self.store_dir / PREVIEW_DIR_NAME).exists(),
+                         "默认不应创建 预览/ 目录")
 
 
 class TestGeometry(PrintExportBase):
