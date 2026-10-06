@@ -249,8 +249,9 @@ class TestSingleFile(PrintExportBase):
             "第 5 通道必须是 UNASSOCIATED_ALPHA(2) —— 专色通道的存法",
         )
         self.assertEqual(
-            d["channel_names"], ["White"],
-            "必须带专色通道名，否则蒙泰不认这是白墨",
+            d["channel_names"], ["W1"],
+            "必须带专色通道名（现场 PS 通道面板显示的是 W1），"
+            "否则蒙泰不认这是白墨",
         )
         self.assertEqual(d["compression"], 5, "LZW")
         self.assertEqual(d["predictor"], 2, "水平差分预测")

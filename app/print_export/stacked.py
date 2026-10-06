@@ -33,15 +33,15 @@
 **两个都要有。** 只给 alpha 不给名字，蒙泰不知道它是白墨；只给名字不给 alpha，
 通道类型就不对。之前把这两件事做成了互斥的两个选项，是设计错误。
 
-通道名**因机而异**，不能照抄网上的教程。解析现场 PS 动作 `一键专色(1).ATN`
-得到它执行的是：
+通道名**因机而异**，以**现场 PS 通道面板里的实际显示**为准 —— 现场是 `W1`。
 
-    convertMode → CMYK
-    make → SCch（Spot Color Channel），Nm = "White"，Clr = HSBC
-    save → TIFF
+⚠️ 这里踩过两次坑，都是「照抄别人」：
 
-所以**现场这台是 `White`**（网上教程写的 `W1` 是别人那台机器）。
-配置项 `print.spot_channel_name` 可改。
+  1. 网上教程说他那台是 `W1` → 照抄 `W1`（这次碰巧对了）
+  2. 解析现场动作 `一键专色(1).ATN` 得到 `Nm = "White"` → 改成 `White`，
+     但**现场通道面板里显示的是 `W1`**，那个动作文件很可能不是现场在用的。
+
+**结论：只认通道面板。** 配置项 `print.spot_channel_name` 可改。
 
 ⚠️ 依赖 `imagecodecs`（tifffile 解/压 LZW 需要它）。
 """
@@ -97,7 +97,7 @@ def save_stacked_cmyk_white(
     white: Image.Image | None,
     dpi: int = 120,
     alpha_mode: bool = True,
-    spot_name: str = "White",
+    spot_name: str = "W1",
 ) -> Path:
     """写出 5 通道 TIF（CMYK + 白墨专色）—— 对齐蒙泰 V7.0 + H-2003E。
 
@@ -118,8 +118,9 @@ def save_stacked_cmyk_white(
         white: 白墨单通道图（``255 = 印白墨``）；``None`` 时补全 255
         dpi: 分辨率，写进 TIFF 标签
         alpha_mode: 是否标成 alpha（专色通道的存法）。默认 True。
-        spot_name: 专色通道名。**按现场 PS 动作定** —— 解析 `一键专色(1).ATN`
-            得到 `Nm = "White"`，所以现场这台是 `White`。
+        spot_name: 专色通道名。**以现场 PS 通道面板的实际显示为准** ——
+            现场是 `W1`。（动作文件 `一键专色(1).ATN` 里写的是 `White`，
+            但通道面板显示 `W1`，说明那个动作不是现场在用的。）
 
     Returns:
         输出路径
