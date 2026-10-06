@@ -271,18 +271,28 @@ def save_stacked_cmyk_white(
             )
 
     if transparency:
-        # ⚠️ 「透明度」通道 = 白墨的**反相**。
+        # ⚠️⚠️ **通道顺序是决定性的** —— 蒙泰取「第一个 alpha 通道」当专色。
         #
-        #    从现场能打印的文件实测：第 5（透明度）与第 6（W1）正好反相 ——
-        #      第5 的 255 占 50.5%，第6 的 255 占 49.5%
-        #    语义上：透明度 255 = 完全透明（背景），白墨 255 = 印白墨（图案区）。
+        #     顺序放错 → 它读到的是「透明度」（= 白墨反相）→ 白墨印到背景上，
+        #     表现为「主体没有了、边框有墨」。实测 23 个门店**全部印反**。
+        #
+        #     现场三组对照（同一张图，只改通道安排）：
+        #       A 透明度在前、W1 在后（6 通道） → ❌ 反
+        #       B W1 在前、透明度在后（6 通道） → ✅ **正常**
+        #       C 只有 W1（5 通道）              → ❌ 不行
+        #
+        #     所以：**第 5 通道必须是 W1**，透明度排它后面。
+        #
+        #     语义：白墨 255 = 印白墨（图案区）；透明度 255 = 完全透明（背景），
+        #     两者互为反相。
         alpha = (255 - w).astype(np.uint8)
-        stacked = np.dstack([arr, alpha, w])
-        # PS 写的是 (ASSOCALPHA, UNSPECIFIED) —— 透明度是 associated alpha，
-        # 白墨是未指定的额外通道（它的含义靠 IRB 里的专色定义给出）。
+        stacked = np.dstack([arr, w, alpha])
+        # ExtraSamples 沿用 B 变体实测可用的形态：
+        # 第 5 通道（W1）标 ASSOCALPHA、第 6 通道（透明度）标 UNSPECIFIED。
+        # ⚠️ 语义上看着"不匹配"，但**这是实测能打印的那一组**，不要凭直觉改。
         extrasamples = [1, 0]
     else:
-        # 退化形态：只带白墨一路（旧行为，蒙泰不认）
+        # 退化形态：只带白墨一路（实测蒙泰**不认**，仅作兼容保留）
         stacked = np.dstack([arr, w])
         extrasamples = [0] if not alpha_mode else [2]
 
@@ -319,9 +329,10 @@ def save_stacked_cmyk_white(
 def read_stacked(path: Path) -> tuple[Image.Image, Image.Image]:
     """读回多通道 TIF，返回 `(CMYK, 白墨)`。
 
-    ⚠️ 白墨取的是**最后一个**额外通道，不是第 5 个：
-       现场能打印的文件是 6 通道 —— CMYK(4) + **透明度**(5) + **W1**(6)，
-       第 5 通道是透明度（与白墨反相），拿错了极性就完全颠倒。
+    ⚠️ 白墨在第 **5** 通道（紧跟 CMYK），不是最后一个：
+       现在的通道顺序是 CMYK(4) + **W1**(5) + **透明度**(6) ——
+       W1 必须排在前，蒙泰取「第一个 alpha 通道」当专色。
+       拿成最后一个会读到透明度（= 白墨反相），极性整个颠倒。
 
     主要给测试与人工核对用。
     """
@@ -335,7 +346,7 @@ def read_stacked(path: Path) -> tuple[Image.Image, Image.Image]:
             raise RuntimeError(f"不是预期的多通道 TIFF：shape={arr.shape}")
         cmyk = Image.fromarray(arr[..., :4], mode="CMYK")
         if arr.shape[2] >= 5:
-            white = Image.fromarray(arr[..., -1], mode="L")
+            white = Image.fromarray(arr[..., 4], mode="L")
         else:
             white = Image.new("L", cmyk.size, 255)
         return cmyk, white
