@@ -107,7 +107,7 @@ class TestMappingComplete(unittest.TestCase):
         """12 个子配置的字段总数必须等于 57。"""
         total = sum(len(dataclasses.fields(getattr(Config(), n)))
                     for n in SUBCONFIG_NAMES)
-        self.assertEqual(total, 60, f"子配置字段合计 {total}，应为 60")   # 57 基线 +2 交付精简 +1 单文件模式   # 57 是 Phase 0 基线；+2 为印刷交付精简新增
+        self.assertEqual(total, 62, f"子配置字段合计 {total}，应为 62")   # 57 基线 +2 交付精简 +1 单文件 +2 专色通道   # 57 基线 +2 交付精简 +1 单文件模式   # 57 是 Phase 0 基线；+2 为印刷交付精简新增
 
 
 class TestCompatProperties(unittest.TestCase):

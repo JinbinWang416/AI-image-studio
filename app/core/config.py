@@ -346,6 +346,19 @@ class PrintConfig:
     #    对齐现场能直接打印的样例（SamplesPerPixel=5、LZW、Predictor=2）。
     #    关掉则退回旧的分层输出（`_CMYK.tif` + `_白墨.tif`），供需要分层的 RIP 使用。
     single_file: bool = True
+    # ⚠️ 白墨通道怎么标 —— 决定 RIP 能不能认出白墨。
+    #
+    #    True（默认）→ 第 5 通道标成 UNASSOCIATED_ALPHA，即「透明度」。
+    #        蒙泰 6.1 UV 版默认就走这条路（官方教程的「方法二：勾选透明度」）。
+    #    False → 标成 UNSPECIFIED 并尝试写专色通道名（`spot_channel_name`），
+    #        对应教程的「方法一：新建专色通道」。
+    #
+    #    第一版固定用 UNSPECIFIED，结果蒙泰**两边都不认** ——
+    #    既不是透明度、也没有专色通道名，导出后只能进 PS 手工改成专色通道。
+    use_alpha_channel: bool = True
+    # 专色通道名。各家不同：教程作者那台的白墨是 `W1`、光油 `W2`/`W3`。
+    # 仅 `use_alpha_channel=False` 时使用。
+    spot_channel_name: str = "W1"
 
 
 @dataclass

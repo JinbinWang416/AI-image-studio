@@ -1,23 +1,41 @@
 # -*- coding: utf-8 -*-
-"""把 CMYK 与白墨合成**单个 5 通道 TIF** —— 对齐海邦达 H-2003E 的可用样例。
+"""把 CMYK 与白墨合成**单个 5 通道 TIF** —— 适配蒙泰 V7.0 + 海邦达 H-2003E。
 
-## 为什么要这样
+## 为什么是 5 通道
 
-拿现场「能直接打印」的样例（`学生托管门店_01.tif`）反向分析，它的结构是：
+拿现场「能直接打印」的样例（`学生托管门店_01.tif`）反向分析：
 
-    SamplesPerPixel          = 5
-    BitsPerSample            = (8, 8, 8, 8, 8)
-    PhotometricInterpretation= 5 (separated / CMYK)
-    ExtraSamples             = (0,)          ← 1 个额外通道 = 白墨专色
-    Compression              = 5 (LZW)
-    Predictor                = 2
-    Resolution               = 120 × 120
+    SamplesPerPixel           = 5
+    BitsPerSample             = (8, 8, 8, 8, 8)
+    PhotometricInterpretation = 5 (separated / CMYK)
+    ExtraSamples              = (0,)          ← 1 个额外通道
+    Compression               = 5 (LZW) / Predictor = 2
+    Resolution                = 120 × 120
 
 第 5 通道是**双峰蒙版**（42.3% 为 0、56.7% 为 255、中间值仅 0.9%），
 即 `255 = 印白墨`（图案区）、`0 = 不印`（透明背景）。
 
-**Pillow 写不了 5 通道**（`Image.mode` 里没有 CMYKA 这种组合），
-所以这里用 `tifffile` 直接写数组。
+## ⚠️ 光有第 5 个通道不够 —— RIP 得知道它是什么
+
+**第一版**把第 5 通道标成 `UNSPECIFIED(0)`，结果**蒙泰不认**，
+导出后还得进 PS 手工改一遍。现场照片解释了为什么：
+
+    蒙泰 V7.0 → 白墨设定
+      白彩关系        = 白彩同出
+      白墨输出模式    = 【专色】      ← 按专色通道识别，不是按透明度
+      通道数          = 1
+
+所以第 5 通道必须表达成**专色通道**。Photoshop 存专色通道的组成是：
+
+1. `ExtraSamples = UNASSOCIATED_ALPHA(2)` —— 通道本体是 alpha
+2. IRB(34377) → `AlphaChannelsNames(0x03EE)` —— 通道**名字**
+
+**两个都要有。** 只给 alpha 不给名字，蒙泰不知道它是白墨；只给名字不给 alpha，
+通道类型就不对。之前把这两件事做成了互斥的两个选项，是设计错误。
+
+通道名各家不同：现场那台蒙泰的白墨是 `W1`、光油 `W2`/`W3`
+（见 [UV打印白墨通道制作](https://1293.fun/?post=33)），
+配置项 `print.spot_channel_name` 可改。
 
 ⚠️ 依赖 `imagecodecs`（tifffile 解/压 LZW 需要它）。
 """
@@ -39,19 +57,62 @@ COMPRESSION = "lzw"
 PREDICTOR = 2
 
 
+def _irb_with_channel_names(names: list[str]) -> bytes:
+    """构造 Photoshop IRB，写入 `AlphaChannelsNames`(0x03EE)。
+
+    Photoshop 把「通道叫什么」记在 ImageResourcesBlock 里。蒙泰的白墨输出模式
+    是**专色**，靠通道名认出哪条是白墨 —— 所以这个名字是必需的，不是装饰。
+
+    格式（每个资源块）::
+
+        '8BIM' | id(2B) | 名字长度(1B) | 名字 | 补偶 | 数据长度(4B) | 数据 | 补偶
+
+    `AlphaChannelsNames` 的数据是若干 Pascal 串依次拼接。
+    """
+    import struct
+
+    data = bytearray()
+    for n in names:
+        raw = n.encode("latin-1", "replace")[:255]
+        data.append(len(raw))
+        data += raw
+
+    # 资源块头：'8BIM' + id + 空名字 + 补偶 + 长度
+    block = b"8BIM" + struct.pack(">H", 0x03EE) + b"\x00\x00"
+    block += struct.pack(">I", len(data)) + bytes(data)
+    if len(data) % 2:
+        block += b"\x00"
+    return block
+
+
 def save_stacked_cmyk_white(
     path: Path,
     cmyk: Image.Image,
     white: Image.Image | None,
     dpi: int = 120,
+    alpha_mode: bool = True,
+    spot_name: str = "W1",
 ) -> Path:
-    """写出 5 通道 TIF（CMYK + 白墨专色）。
+    """写出 5 通道 TIF（CMYK + 白墨专色）—— 对齐蒙泰 V7.0 + H-2003E。
+
+    现场照片确认：蒙泰「白墨设定」里**白墨输出模式 = 专色**、通道数 = 1、
+    纸张类型 = 彩白彩。所以第 5 通道必须被表达成**专色通道**，而 Photoshop
+    存专色通道的做法是：
+
+      · `ExtraSamples = UNASSOCIATED_ALPHA(2)` —— 通道本体是 alpha
+      · IRB(34377) 的 `AlphaChannelsNames(0x03EE)` —— 通道**名字**
+
+    ⚠️ 两个都要有。只给 alpha 不给名字 → 蒙泰不知道它是白墨；
+       只给名字不给 alpha → 连通道类型都不对。第一版固定在
+       `UNSPECIFIED(0)`，结果是导出后还得进 PS 手工改。
 
     Args:
         path: 输出路径
         cmyk: CMYK 图像（4 通道）
-        white: 白墨单通道图；``None`` 时补一张全 255（整版印白）
+        white: 白墨单通道图（``255 = 印白墨``）；``None`` 时补全 255
         dpi: 分辨率，写进 TIFF 标签
+        alpha_mode: 是否标成 alpha（专色通道的存法）。默认 True。
+        spot_name: 专色通道名。现场蒙泰那台是白墨 `W1`、光油 W2/W3。
 
     Returns:
         输出路径
@@ -85,19 +146,34 @@ def save_stacked_cmyk_white(
 
     stacked = np.dstack([arr, w])
 
-    tifffile.imwrite(
-        path,
-        stacked,
+    # ⚠️ ExtraSamples 的取值决定 RIP 怎么理解第 5 通道：
+    #    2 = UNASSOCIATED_ALPHA —— PS 存专色通道用的就是这个。**正确值**。
+    #    0 = UNSPECIFIED —— 未指定，蒙泰不认（第一版的错误）。
+    extrasamples = [2] if alpha_mode else [0]
+
+    kwargs: dict = dict(
         photometric="separated",        # CMYK
         compression=COMPRESSION,
         predictor=PREDICTOR,
         resolution=(float(dpi), float(dpi)),
         resolutionunit="INCH",
-        extrasamples=[0],               # 1 个 UNSPECIFIED 额外通道（与样例一致）
+        extrasamples=extrasamples,
         metadata=None,                  # 不写 XMP，避免把无关信息带进印刷文件
     )
-    log.info("印刷单文件已写出：%s（%d 通道，%d dpi，%.1f MB）",
-             path.name, stacked.shape[2], dpi, path.stat().st_size / 1024 / 1024)
+
+    # 通道名 —— 蒙泰靠它认出「这条是白墨专色」。
+    # AlphaChannelsNames 的第一项对应**第一个** alpha 通道（也就是第 5 通道）。
+    try:
+        irb = _irb_with_channel_names([spot_name])
+        kwargs["extratags"] = [(34377, 7, len(irb), irb, False)]
+    except Exception as exc:  # noqa: BLE001 - 写不上也不该阻断出图
+        log.warning("专色通道名写入失败（%s），RIP 可能认不出白墨",
+                    type(exc).__name__)
+
+    tifffile.imwrite(path, stacked, **kwargs)
+    log.info("印刷单文件已写出：%s（%d 通道，%d dpi，专色通道名=%s，%.1f MB）",
+             path.name, stacked.shape[2], dpi, spot_name,
+             path.stat().st_size / 1024 / 1024)
     return path
 
 
@@ -124,11 +200,12 @@ def read_stacked(path: Path) -> tuple[Image.Image, Image.Image]:
 
 def describe(path: Path) -> dict:
     """读出关键标签，用于自检 / 与样例对比。"""
+    import struct
     import tifffile
 
     with tifffile.TiffFile(Path(path)) as tf:
         p = tf.pages[0]
-        return {
+        d = {
             "samples_per_pixel": p.samplesperpixel,
             "bits_per_sample": p.bitspersample,
             "photometric": int(p.photometric),
@@ -138,3 +215,34 @@ def describe(path: Path) -> dict:
             "shape": tuple(p.shape),
             "size": p.shape[:2][::-1] if p.shape else (0, 0),
         }
+        # 把专色通道名读出来 —— 这是蒙泰认白墨的依据，必须能自检
+        irb = p.tags.get(34377)
+        d["channel_names"] = _read_channel_names(irb.value) if irb else []
+    return d
+
+
+def _read_channel_names(blob) -> list[str]:
+    """从 IRB 里解析 `AlphaChannelsNames`(0x03EE)。"""
+    import struct
+
+    if isinstance(blob, tuple):
+        blob = b"".join(blob)
+    pos, n = 0, len(blob)
+    while pos + 12 <= n:
+        if blob[pos:pos + 4] != b"8BIM":
+            break
+        rid = struct.unpack(">H", blob[pos + 4:pos + 6])[0]
+        name_len = blob[pos + 6]
+        pad = (name_len + 1) % 2
+        size_off = pos + 7 + name_len + pad
+        size = struct.unpack(">I", blob[size_off:size_off + 4])[0]
+        data = blob[size_off + 4:size_off + 4 + size]
+        if rid == 0x03EE:
+            names, i = [], 0
+            while i < len(data):
+                ln = data[i]
+                names.append(data[i + 1:i + 1 + ln].decode("latin-1", "replace"))
+                i += 1 + ln
+            return names
+        pos = size_off + 4 + size + (size % 2)
+    return []

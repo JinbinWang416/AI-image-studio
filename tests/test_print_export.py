@@ -222,7 +222,18 @@ class TestSingleFile(PrintExportBase):
             )
 
     def test_structure_matches_sample(self) -> None:
-        """TIFF 标签必须与现场样例一致 —— 这是「能直接打印」的前提。"""
+        """TIFF 结构必须让蒙泰认出白墨专色 —— 这是「能直接打印」的前提。
+
+        现场照片确认：蒙泰 V7.0「白墨设定」里**白墨输出模式 = 专色**、
+        通道数 = 1、纸张类型 = 彩白彩。所以第 5 通道要表达成**专色通道**，
+        而 Photoshop 存专色通道的组成是：
+
+          · `ExtraSamples = UNASSOCIATED_ALPHA(2)`
+          · IRB(34377) → `AlphaChannelsNames`，通道名 = `W1`
+
+        ⚠️ 两个都要有。第一版固定用 `UNSPECIFIED(0)` 又没写通道名，
+           蒙泰两边都不认，导出后还得进 PS 手工改成专色通道。
+        """
         self.export()
         from app.print_export.stacked import describe
 
@@ -230,7 +241,14 @@ class TestSingleFile(PrintExportBase):
         self.assertEqual(d["samples_per_pixel"], 5, "必须是 5 通道（CMYK+白墨）")
         self.assertEqual(d["bits_per_sample"], 8)
         self.assertEqual(d["photometric"], 5, "CMYK（separated）")
-        self.assertEqual(d["extrasamples"], [0], "1 个额外通道 = 白墨专色")
+        self.assertEqual(
+            d["extrasamples"], [2],
+            "第 5 通道必须是 UNASSOCIATED_ALPHA(2) —— 专色通道的存法",
+        )
+        self.assertEqual(
+            d["channel_names"], ["W1"],
+            "必须带专色通道名，否则蒙泰不认这是白墨",
+        )
         self.assertEqual(d["compression"], 5, "LZW")
         self.assertEqual(d["predictor"], 2, "水平差分预测")
 
