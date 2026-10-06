@@ -461,12 +461,29 @@ class PrintExporter:
         cmyk_path = print_dir / f"{name}_CMYK.tif"
         stacked_path = print_dir / f"{name}.tif"
         try:
-            cmyk_img, icc_info = to_cmyk(big, self._icc_path)
+            # ⚠️ 转 CMYK **之前**必须把透明区合成到**白底**。
+            #
+            #    去背把背景变成 `alpha=0`，但它底下的 RGB 仍是 `(0,0,0)`。
+            #    直接转 CMYK 的话，透明区会变成 `K=255`（满黑）——
+            #    实测背景 48% 的像素都是 `[0,0,0,255]`，**打印出来就是一整片黑**
+            #    （用户描述为「打印是黑体」）。
+            #
+            #    先合成到白底 → 背景变成 `(255,255,255)` → CMYK 全 0 → 不印。
+            #    白墨本来就不在背景上印（W1 通道为 0），两者正好一致。
+            cmyk_src = big
+            if cmyk_src.mode == "RGBA":
+                _white_bg = Image.new("RGBA", cmyk_src.size, (255, 255, 255, 255))
+                cmyk_src = Image.alpha_composite(_white_bg, cmyk_src)
+                mf.options["flattened_to_white"] = True
+
+            cmyk_img, icc_info = to_cmyk(cmyk_src, self._icc_path)
             icc_info["source"] = self._icc_source
             mf.icc = icc_info
             if icc_info.get("fallback"):
                 mf.warnings.append(icc_info.get("note") or "ICC 缺失，已降级为朴素转换")
 
+            # 偏色保护仍用**原始 RGBA**：它按原始像素判断哪些颜色需要保护，
+            # 用合成后的图会丢掉透明度的信息。
             cmyk_img, notes = protect_colors(cmyk_img, big)
             if notes:
                 mf.warnings.extend(f"偏色保护 · {n}" for n in notes)
