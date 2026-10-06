@@ -229,7 +229,10 @@ class TestSingleFile(PrintExportBase):
         而 Photoshop 存专色通道的组成是：
 
           · `ExtraSamples = UNASSOCIATED_ALPHA(2)`
-          · IRB(34377) → `AlphaChannelsNames`，通道名 = `W1`
+          · IRB(34377) → `AlphaChannelsNames`，通道名 = `White`
+
+        名字按现场的 PS 动作 `一键专色(1).ATN` 定：它执行 make → SCch
+        （Spot Color Channel），`Nm = "White"`。
 
         ⚠️ 两个都要有。第一版固定用 `UNSPECIFIED(0)` 又没写通道名，
            蒙泰两边都不认，导出后还得进 PS 手工改成专色通道。
@@ -246,7 +249,7 @@ class TestSingleFile(PrintExportBase):
             "第 5 通道必须是 UNASSOCIATED_ALPHA(2) —— 专色通道的存法",
         )
         self.assertEqual(
-            d["channel_names"], ["W1"],
+            d["channel_names"], ["White"],
             "必须带专色通道名，否则蒙泰不认这是白墨",
         )
         self.assertEqual(d["compression"], 5, "LZW")

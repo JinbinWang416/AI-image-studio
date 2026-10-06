@@ -33,8 +33,14 @@
 **两个都要有。** 只给 alpha 不给名字，蒙泰不知道它是白墨；只给名字不给 alpha，
 通道类型就不对。之前把这两件事做成了互斥的两个选项，是设计错误。
 
-通道名各家不同：现场那台蒙泰的白墨是 `W1`、光油 `W2`/`W3`
-（见 [UV打印白墨通道制作](https://1293.fun/?post=33)），
+通道名**因机而异**，不能照抄网上的教程。解析现场 PS 动作 `一键专色(1).ATN`
+得到它执行的是：
+
+    convertMode → CMYK
+    make → SCch（Spot Color Channel），Nm = "White"，Clr = HSBC
+    save → TIFF
+
+所以**现场这台是 `White`**（网上教程写的 `W1` 是别人那台机器）。
 配置项 `print.spot_channel_name` 可改。
 
 ⚠️ 依赖 `imagecodecs`（tifffile 解/压 LZW 需要它）。
@@ -91,7 +97,7 @@ def save_stacked_cmyk_white(
     white: Image.Image | None,
     dpi: int = 120,
     alpha_mode: bool = True,
-    spot_name: str = "W1",
+    spot_name: str = "White",
 ) -> Path:
     """写出 5 通道 TIF（CMYK + 白墨专色）—— 对齐蒙泰 V7.0 + H-2003E。
 
@@ -112,7 +118,8 @@ def save_stacked_cmyk_white(
         white: 白墨单通道图（``255 = 印白墨``）；``None`` 时补全 255
         dpi: 分辨率，写进 TIFF 标签
         alpha_mode: 是否标成 alpha（专色通道的存法）。默认 True。
-        spot_name: 专色通道名。现场蒙泰那台是白墨 `W1`、光油 W2/W3。
+        spot_name: 专色通道名。**按现场 PS 动作定** —— 解析 `一键专色(1).ATN`
+            得到 `Nm = "White"`，所以现场这台是 `White`。
 
     Returns:
         输出路径

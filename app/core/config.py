@@ -356,9 +356,17 @@ class PrintConfig:
     #    第一版固定用 UNSPECIFIED，结果蒙泰**两边都不认** ——
     #    既不是透明度、也没有专色通道名，导出后只能进 PS 手工改成专色通道。
     use_alpha_channel: bool = True
-    # 专色通道名。各家不同：教程作者那台的白墨是 `W1`、光油 `W2`/`W3`。
-    # 仅 `use_alpha_channel=False` 时使用。
-    spot_channel_name: str = "W1"
+    # 专色通道名 —— 蒙泰靠它认出白墨。
+    #
+    # ⚠️ 这个名字**因机而异**，必须按现场的 PS「一键专色」动作来定：
+    #    解析 `一键专色(1).ATN` 得到的动作步骤是
+    #      convertMode → CMYK
+    #      make → SCch（Spot Color Channel），Nm = **"White"**，Clr = HSBC
+    #      save → TIFF
+    #    所以现场这台是 `White`。
+    #
+    #    （网上教程里说的 `W1` 是别人那台机器的命名，不要照抄。）
+    spot_channel_name: str = "White"
 
 
 @dataclass
