@@ -224,37 +224,79 @@ class TestSingleFile(PrintExportBase):
     def test_structure_matches_sample(self) -> None:
         """TIFF 结构必须让蒙泰认出白墨专色 —— 这是「能直接打印」的前提。
 
-        现场照片确认：蒙泰 V7.0「白墨设定」里**白墨输出模式 = 专色**、
-        通道数 = 1、纸张类型 = 彩白彩。所以第 5 通道要表达成**专色通道**，
-        而 Photoshop 存专色通道的组成是：
+        结构是拿现场「跑完 PS、确认能打印」的文件逐字节反推的
+        （`01_房屋中介门店_试印(3).tif`）：
 
-          · `ExtraSamples = UNASSOCIATED_ALPHA(2)`
-          · IRB(34377) → `AlphaChannelsNames`，通道名 = `White`
+            SamplesPerPixel = 6
+            ExtraSamples    = (ASSOCALPHA(1), UNSPECIFIED(0))
+            通道名           = ['透明度', 'W1']
+            第5通道 255 占 50.5%、第6通道 255 占 49.5%   ← 两者反相
 
-        名字按现场的 PS 动作 `一键专色(1).ATN` 定：它执行 make → SCch
-        （Spot Color Channel），`Nm = "White"`。
+        IRB(34377) 里 **4 个资源块缺一不可**（只写通道名不够 —— 第一版
+        试过，蒙泰仍要求进 PS 手工设专色）：
 
-        ⚠️ 两个都要有。第一版固定用 `UNSPECIFIED(0)` 又没写通道名，
-           蒙泰两边都不认，导出后还得进 PS 手工改成专色通道。
+            0x03EE AlphaChannelsNames
+            0x0415 UnicodeAlphaNames
+            0x042B AlternateSpotColors   ← 油墨特性（白色 + 密度 100%）
+            0x041D AlphaIdentifiers
         """
         self.export()
         from app.print_export.stacked import describe
 
         d = describe(self.print_dir() / "01_测试门店_01.tif")
-        self.assertEqual(d["samples_per_pixel"], 5, "必须是 5 通道（CMYK+白墨）")
+        self.assertEqual(
+            d["samples_per_pixel"], 6,
+            "必须是 6 通道（CMYK + 透明度 + 白墨）",
+        )
         self.assertEqual(d["bits_per_sample"], 8)
         self.assertEqual(d["photometric"], 5, "CMYK（separated）")
         self.assertEqual(
-            d["extrasamples"], [2],
-            "第 5 通道必须是 UNASSOCIATED_ALPHA(2) —— 专色通道的存法",
+            d["extrasamples"], [1, 0],
+            "必须是 (ASSOCALPHA, UNSPECIFIED) —— 与 PS 存的完全一致",
         )
         self.assertEqual(
-            d["channel_names"], ["W1"],
-            "必须带专色通道名（现场 PS 通道面板显示的是 W1），"
-            "否则蒙泰不认这是白墨",
+            d["channel_names"], ["透明度", "W1"],
+            "两路 alpha 都要有名字：透明度 + 专色 W1",
         )
         self.assertEqual(d["compression"], 5, "LZW")
         self.assertEqual(d["predictor"], 2, "水平差分预测")
+
+    def test_irb_spot_resources_match_ps(self) -> None:
+        """四个专色资源块必须与现场 PS 文件**逐字节一致**。
+
+        这几个字节是从能打印的文件里挖出来的，任何偏差都可能让蒙泰
+        认不出白墨。锁进测试，防止以后无意改动。
+        """
+        self.export()
+        import tifffile
+
+        with tifffile.TiffFile(self.print_dir() / "01_测试门店_01.tif") as tf:
+            irb = tf.pages[0].tags.get(34377)
+        self.assertIsNotNone(irb, "必须写 Photoshop IRB(34377)")
+
+        blob = irb.value
+        pos, got = 0, {}
+        while pos + 12 <= len(blob):
+            rid = int.from_bytes(blob[pos + 4:pos + 6], "big")
+            nm_len = blob[pos + 6]
+            pad = (nm_len + 1) % 2
+            so = pos + 7 + nm_len + pad
+            size = int.from_bytes(blob[so:so + 4], "big")
+            got[rid] = blob[so + 4:so + 4 + size].hex()
+            pos = so + 4 + size + (size % 2)
+
+        expected = {
+            0x03EE: "06cdb8c3f7b6c8025731",                          # 透明度 / W1
+            0x0415: "00000004900f660e5ea6000000000003005700310000",  # Unicode 版
+            0x042B: "000100010000000400072710000000000000",          # 密度 100%
+            0x041D: "0000000000000004",                              # alpha IDs
+        }
+        for rid, want in expected.items():
+            self.assertIn(rid, got, f"缺少资源块 0x{rid:04X}")
+            self.assertEqual(
+                got[rid], want,
+                f"资源块 0x{rid:04X} 与现场 PS 文件不一致",
+            )
 
     def test_size_matches_60cm_at_dpi(self) -> None:
         """60cm @ 120dpi = 2835px（与样例完全一致）。"""

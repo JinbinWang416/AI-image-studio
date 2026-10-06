@@ -62,26 +62,131 @@ log = logging.getLogger(__name__)
 COMPRESSION = "lzw"
 PREDICTOR = 2
 
+# ---------------------------------------------------------------- 专色资源块
+#
+# 下面这几个字节是**从现场「能打印」的文件里逐字节挖出来的**
+# （`01_房屋中介门店_试印(3).tif`，PS 27.0 处理过、蒙泰认它）。
+#
+# ⚠️ 只写 `AlphaChannelsNames` **不够** —— 第一版就是这么写的，
+#    结果蒙泰仍要求手工设专色。PS 实际写了 **4 个**资源块，
+#    其中 `AlternateSpotColors` 才是「油墨特性」（颜色 + 密度）的载体。
+#
+# `AlternateSpotColors` 的 18 字节结构：::
+#
+#     00 01             版本 1
+#     00 01             专色数量 = 1
+#     00 00 00 04       色彩空间 ID（HSB）
+#     00 07             项数 7
+#     27 10             = 10000 = 密度 100%
+#     00 00 00 00 00 00 颜色值（白色）
+SPOT_RES_ALPHA_NAMES = 0x03EE
+SPOT_RES_UNICODE_NAMES = 0x0415
+SPOT_RES_ALT_SPOT = 0x042B
+SPOT_RES_ALPHA_IDS = 0x041D
 
-def _irb_with_channel_names(names: list[str]) -> bytes:
-    """构造 Photoshop IRB，写入 `AlphaChannelsNames`(0x03EE)。
+# 现场实测值，照抄即可（改颜色/密度时才需要动）
+_ALT_SPOT_DENSITY = 10000          # 0x2710 = 密度 100%
+_ALPHA_IDS = (0, 4)
 
-    Photoshop 把「通道叫什么」记在 ImageResourcesBlock 里。蒙泰的白墨输出模式
-    是**专色**，靠通道名认出哪条是白墨 —— 所以这个名字是必需的，不是装饰。
+# 透明度通道的名字。PS 用 GBK 写在 AlphaChannelsNames 里，
+# 用 UTF-16BE 写在 UnicodeAlphaNames 里。
+TRANSPARENCY_NAME = "透明度"
 
-    格式（每个资源块）::
+
+def _res_block(rid: int, data: bytes) -> bytes:
+    """包一个 Photoshop IRB 资源块。
+
+    格式::
 
         '8BIM' | id(2B) | 名字长度(1B) | 名字 | 补偶 | 数据长度(4B) | 数据 | 补偶
 
-    `AlphaChannelsNames` 的数据是若干 Pascal 串依次拼接。
+    名字一律留空（PS 也是这么写的），数据长度不足偶数时补一个 0。
     """
     import struct
 
-    data = bytearray()
+    block = b"8BIM" + struct.pack(">H", rid) + b"\x00\x00"
+    block += struct.pack(">I", len(data)) + data
+    if len(data) % 2:
+        block += b"\x00"
+    return block
+
+
+def _pascal_names(names: list[str], encoding: str, width: int) -> bytes:
+    """把名字列表编码成 IRB 里那两种 Pascal 串数组。
+
+    · `AlphaChannelsNames` —— 1 字节长度 + 单字节编码（现场是 GBK）
+    · `UnicodeAlphaNames`  —— 4 字节长度 + UTF-16BE
+
+    ⚠️ 现场文件里第一个名字（透明度）**没有**结尾的 NUL，第二个有。
+       PS 自己都不一致，这里按「每个名字补一个 NUL」统一写，
+       长度字段随之加一 —— 蒙泰按长度读，不会错位。
+    """
+    out = bytearray()
     for n in names:
-        raw = n.encode("latin-1", "replace")[:255]
-        data.append(len(raw))
-        data += raw
+        if encoding == "utf-16-be":
+            raw = (n + "\x00").encode("utf-16-be")
+            out += (len(raw) // 2).to_bytes(4, "big")   # 长度按 UTF-16 单元数
+            out += raw
+        else:
+            raw = n.encode(encoding, "replace")[:255]
+            out.append(len(raw))
+            out += raw
+    return bytes(out)
+
+
+def _irb_with_spot_channel(
+    spot_name: str = "W1",
+    has_transparency: bool = True,
+    density: int = _ALT_SPOT_DENSITY,
+) -> bytes:
+    """构造完整的 Photoshop IRB（4 个资源块）—— 让蒙泰认出白墨专色。
+
+    ⚠️ 这 4 个块是**实测得出**的，缺一不可：
+
+      0x03EE `AlphaChannelsNames`  —— 通道名（GBK 单字节）
+      0x0415 `UnicodeAlphaNames`   —— 通道名（UTF-16BE，PS 也写）
+      0x042B `AlternateSpotColors` —— **油墨特性：颜色 + 密度**（关键！）
+      0x041D `AlphaIdentifiers`    —— 各 alpha 通道的 ID
+
+    第一版只写了 0x03EE，蒙泰照样不认 —— 缺的正是 `AlternateSpotColors`。
+    """
+    import struct
+
+    names = [TRANSPARENCY_NAME, spot_name] if has_transparency else [spot_name]
+    # GBK 是现场文件的编码（`cd b8 c3 f7 b6 c8` = 透明度）
+    ansi = _pascal_names(names, "gbk", 1)
+    uni = _pascal_names(names, "utf-16-be", 4)
+
+    n_alpha = len(names)
+    # 18 字节，逐字段对齐现场 PS 文件：
+    #   00 01 | 00 01 | 00 00 00 04 | 00 07 | 27 10 | 00 00 00 00 00 00
+    #   H(2)    H(2)    I(4)          H(2)    H(2)    6s(6)             = 18
+    spot = struct.pack(
+        ">HHIHH6s",
+        1,                      # 版本
+        1,                      # 专色数量（PS 恒为 1，即使有透明度通道）
+        4,                      # 色彩空间 ID（HSB）
+        7,                      # 项数
+        density,                # 密度，10000 = 100%
+        b"\x00" * 6,            # 颜色值（白色）
+    )
+    ids = b"".join(struct.pack(">I", i) for i in _ALPHA_IDS[:n_alpha])
+
+    return (
+        _res_block(SPOT_RES_ALPHA_NAMES, ansi)
+        + _res_block(SPOT_RES_UNICODE_NAMES, uni)
+        + _res_block(SPOT_RES_ALT_SPOT, spot)
+        + _res_block(SPOT_RES_ALPHA_IDS, ids)
+    )
+
+
+def _irb_with_channel_names(names: list[str]) -> bytes:
+    """只写通道名（旧接口，保留兼容）。
+
+    新代码请用 `_irb_with_spot_channel()` —— 只写名字蒙泰不认。
+    """
+    return _res_block(SPOT_RES_ALPHA_NAMES,
+                      _pascal_names(names, "latin-1", 1))
 
     # 资源块头：'8BIM' + id + 空名字 + 补偶 + 长度
     block = b"8BIM" + struct.pack(">H", 0x03EE) + b"\x00\x00"
@@ -98,29 +203,42 @@ def save_stacked_cmyk_white(
     dpi: int = 120,
     alpha_mode: bool = True,
     spot_name: str = "W1",
+    transparency: bool = True,
+    density: int = _ALT_SPOT_DENSITY,
 ) -> Path:
-    """写出 5 通道 TIF（CMYK + 白墨专色）—— 对齐蒙泰 V7.0 + H-2003E。
+    """写出多通道 TIF（CMYK + 透明度 + 白墨专色）—— 适配蒙泰 V7.0 + H-2003E。
 
-    现场照片确认：蒙泰「白墨设定」里**白墨输出模式 = 专色**、通道数 = 1、
-    纸张类型 = 彩白彩。所以第 5 通道必须被表达成**专色通道**，而 Photoshop
-    存专色通道的做法是：
+    现场证据链：
 
-      · `ExtraSamples = UNASSOCIATED_ALPHA(2)` —— 通道本体是 alpha
-      · IRB(34377) 的 `AlphaChannelsNames(0x03EE)` —— 通道**名字**
+    1. 蒙泰「白墨设定」—— **白墨输出模式 = 专色**、通道数 = 1、纸张类型 = 彩白彩
+    2. PS 通道面板 —— 专色通道名 **`W1`**，颜色白色，密度 100%
+    3. 一个「跑完 PS、确认能打印」的文件 —— 结构是：
 
-    ⚠️ 两个都要有。只给 alpha 不给名字 → 蒙泰不知道它是白墨；
-       只给名字不给 alpha → 连通道类型都不对。第一版固定在
-       `UNSPECIFIED(0)`，结果是导出后还得进 PS 手工改。
+           SamplesPerPixel = 6
+           ExtraSamples    = (ASSOCALPHA(1), UNSPECIFIED(0))
+           通道名           = ['透明度', 'W1']
+           第5通道 255 占 50.5%   第6通道 255 占 49.5%   ← 两者反相
+
+    所以形状是 **CMYK(4) + 透明度(1) + 白墨(1) = 6 通道**，
+    而 IRB 里必须写 **4 个资源块**（只写通道名不够 —— 第一版试过，蒙泰仍要求手工设专色）：
+
+      · 0x03EE `AlphaChannelsNames`  —— 通道名（GBK）
+      · 0x0415 `UnicodeAlphaNames`   —— 通道名（UTF-16BE）
+      · 0x042B `AlternateSpotColors` —— **油墨特性：白色 + 密度 100%**（关键）
+      · 0x041D `AlphaIdentifiers`    —— alpha 通道 ID
 
     Args:
         path: 输出路径
         cmyk: CMYK 图像（4 通道）
         white: 白墨单通道图（``255 = 印白墨``）；``None`` 时补全 255
         dpi: 分辨率，写进 TIFF 标签
-        alpha_mode: 是否标成 alpha（专色通道的存法）。默认 True。
+        alpha_mode: 保留参数（旧接口兼容），现在恒为真 —— PS 存专色通道
+            用的就是 alpha，没有「不用 alpha」的合法形态。
         spot_name: 专色通道名。**以现场 PS 通道面板的实际显示为准** ——
             现场是 `W1`。（动作文件 `一键专色(1).ATN` 里写的是 `White`，
             但通道面板显示 `W1`，说明那个动作不是现场在用的。）
+        transparency: 是否额外带一路「透明度」通道。现场那个能打印的文件
+            是 **6 通道**（CMYK + 透明度 + W1），所以默认带上。
 
     Returns:
         输出路径
@@ -152,12 +270,21 @@ def save_stacked_cmyk_white(
                 f"白墨层尺寸 {w.shape} 与 CMYK {arr.shape[:2]} 不一致"
             )
 
-    stacked = np.dstack([arr, w])
-
-    # ⚠️ ExtraSamples 的取值决定 RIP 怎么理解第 5 通道：
-    #    2 = UNASSOCIATED_ALPHA —— PS 存专色通道用的就是这个。**正确值**。
-    #    0 = UNSPECIFIED —— 未指定，蒙泰不认（第一版的错误）。
-    extrasamples = [2] if alpha_mode else [0]
+    if transparency:
+        # ⚠️ 「透明度」通道 = 白墨的**反相**。
+        #
+        #    从现场能打印的文件实测：第 5（透明度）与第 6（W1）正好反相 ——
+        #      第5 的 255 占 50.5%，第6 的 255 占 49.5%
+        #    语义上：透明度 255 = 完全透明（背景），白墨 255 = 印白墨（图案区）。
+        alpha = (255 - w).astype(np.uint8)
+        stacked = np.dstack([arr, alpha, w])
+        # PS 写的是 (ASSOCALPHA, UNSPECIFIED) —— 透明度是 associated alpha，
+        # 白墨是未指定的额外通道（它的含义靠 IRB 里的专色定义给出）。
+        extrasamples = [1, 0]
+    else:
+        # 退化形态：只带白墨一路（旧行为，蒙泰不认）
+        stacked = np.dstack([arr, w])
+        extrasamples = [0] if not alpha_mode else [2]
 
     kwargs: dict = dict(
         photometric="separated",        # CMYK
@@ -169,10 +296,14 @@ def save_stacked_cmyk_white(
         metadata=None,                  # 不写 XMP，避免把无关信息带进印刷文件
     )
 
-    # 通道名 —— 蒙泰靠它认出「这条是白墨专色」。
-    # AlphaChannelsNames 的第一项对应**第一个** alpha 通道（也就是第 5 通道）。
+    # 专色定义 —— 蒙泰靠它认出「这条是白墨」。**4 个资源块缺一不可**，
+    # 只写通道名不够（第一版就是这么写的，蒙泰仍要求手工设专色）。
     try:
-        irb = _irb_with_channel_names([spot_name])
+        irb = _irb_with_spot_channel(
+            spot_name=spot_name,
+            has_transparency=transparency,
+            density=density,
+        )
         kwargs["extratags"] = [(34377, 7, len(irb), irb, False)]
     except Exception as exc:  # noqa: BLE001 - 写不上也不该阻断出图
         log.warning("专色通道名写入失败（%s），RIP 可能认不出白墨",
@@ -186,9 +317,13 @@ def save_stacked_cmyk_white(
 
 
 def read_stacked(path: Path) -> tuple[Image.Image, Image.Image]:
-    """读回 5 通道 TIF，返回 `(CMYK, 白墨)`。
+    """读回多通道 TIF，返回 `(CMYK, 白墨)`。
 
-    主要给测试与人工核对用 —— 读回后能逐通道比对，确认写出的文件没问题。
+    ⚠️ 白墨取的是**最后一个**额外通道，不是第 5 个：
+       现场能打印的文件是 6 通道 —— CMYK(4) + **透明度**(5) + **W1**(6)，
+       第 5 通道是透明度（与白墨反相），拿错了极性就完全颠倒。
+
+    主要给测试与人工核对用。
     """
     import numpy as np
     import tifffile
@@ -200,7 +335,7 @@ def read_stacked(path: Path) -> tuple[Image.Image, Image.Image]:
             raise RuntimeError(f"不是预期的多通道 TIFF：shape={arr.shape}")
         cmyk = Image.fromarray(arr[..., :4], mode="CMYK")
         if arr.shape[2] >= 5:
-            white = Image.fromarray(arr[..., 4], mode="L")
+            white = Image.fromarray(arr[..., -1], mode="L")
         else:
             white = Image.new("L", cmyk.size, 255)
         return cmyk, white
@@ -230,7 +365,12 @@ def describe(path: Path) -> dict:
 
 
 def _read_channel_names(blob) -> list[str]:
-    """从 IRB 里解析 `AlphaChannelsNames`(0x03EE)。"""
+    """从 IRB 里解析 `AlphaChannelsNames`(0x03EE)。
+
+    ⚠️ 现场文件里「透明度」是 **GBK** 编码（`cd b8 c3 f7 b6 c8`），
+       不是 latin-1 —— 用 latin-1 解会得到乱码 `Í¸Ã÷¶È`。
+       这里先按 GBK 试，失败再退回 latin-1。
+    """
     import struct
 
     if isinstance(blob, tuple):
@@ -246,11 +386,22 @@ def _read_channel_names(blob) -> list[str]:
         size = struct.unpack(">I", blob[size_off:size_off + 4])[0]
         data = blob[size_off + 4:size_off + 4 + size]
         if rid == 0x03EE:
-            names, i = [], 0
-            while i < len(data):
-                ln = data[i]
-                names.append(data[i + 1:i + 1 + ln].decode("latin-1", "replace"))
-                i += 1 + ln
-            return names
+            return _decode_pascal_names(data)
         pos = size_off + 4 + size + (size % 2)
     return []
+
+
+def _decode_pascal_names(data: bytes) -> list[str]:
+    """解 Pascal 串数组，优先 GBK。"""
+    raw, i = [], 0
+    while i < len(data):
+        ln = data[i]
+        raw.append(data[i + 1:i + 1 + ln])
+        i += 1 + ln
+    out = []
+    for b in raw:
+        try:
+            out.append(b.decode("gbk"))
+        except UnicodeDecodeError:
+            out.append(b.decode("latin-1", "replace"))
+    return out

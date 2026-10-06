@@ -477,23 +477,31 @@ class PrintExporter:
                 #    结构对齐现场样例（SamplesPerPixel=5 / LZW / Predictor=2 / 120dpi）。
                 from .stacked import save_stacked_cmyk_white
 
-                # ⚠️ 第 5 通道的标法决定 RIP 认不认（见 stacked.py docstring）：
-                #    默认标成「透明度」，蒙泰 6.1 UV 版默认就读这个；
-                #    标成 UNSPECIFIED 的话蒙泰两边都不认，只能进 PS 手工改专色通道。
+                # ⚠️ 结构对齐现场「能打印」的文件（见 stacked.py docstring）：
+                #    CMYK + 透明度 + 专色 W1 = 6 通道，
+                #    且 IRB 里写齐 4 个资源块（含 AlternateSpotColors 油墨特性）。
+                #    只写通道名不够 —— 试过，蒙泰仍要求进 PS 手工设专色。
                 use_alpha = bool(getattr(print_cfg, "use_alpha_channel", True))
                 spot_name = str(getattr(print_cfg, "spot_channel_name", "W1") or "W1")
+                with_transparency = bool(
+                    getattr(print_cfg, "with_transparency_channel", True)
+                )
                 save_stacked_cmyk_white(
                     stacked_path, cmyk_img, white,
                     dpi=int(getattr(self.cfg, "print_dpi", 120) or 120),
                     alpha_mode=use_alpha,
                     spot_name=spot_name,
+                    transparency=with_transparency,
                 )
                 mf.layers["stacked"] = stacked_path.name
                 mf.options["single_file"] = True
-                mf.options["channels"] = 5 if white is not None else 4
+                mf.options["channels"] = (
+                    (6 if with_transparency else 5) if white is not None else 4
+                )
                 mf.options["white_channel_mode"] = (
                     "alpha" if use_alpha else f"spot:{spot_name}"
                 )
+                mf.options["spot_channel_name"] = spot_name
             else:
                 cmyk_img.save(cmyk_path, format="TIFF", compression=TIFF_COMPRESSION)
                 mf.layers["cmyk"] = cmyk_path.name

@@ -363,6 +363,12 @@ class PrintConfig:
     #    现场实际在用的动作（或跑完后手工改过名）。
     #    **不要照抄动作文件，也不要照抄网上教程，按通道面板的实际显示填。**
     spot_channel_name: str = "W1"
+    # 是否额外带一路「透明度」通道。
+    #
+    # ⚠️ 现场那个「跑完 PS、能打印」的文件是 **6 通道**
+    #    （CMYK + 透明度 + 专色 W1），ExtraSamples = (ASSOCALPHA, UNSPECIFIED)。
+    #    所以默认带上 —— 蒙泰可能就是按这个形状认的。
+    with_transparency_channel: bool = True
 
 
 @dataclass
